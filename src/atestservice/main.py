@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import logging
+from dataclasses import replace
 from pathlib import Path
 
 import uvicorn
@@ -83,7 +84,8 @@ def main() -> None:
     parser.add_argument("--token", default=settings.auth_token, help="MVP 鉴权 token")
     args = parser.parse_args()
 
-    runtime_settings = ServerSettings(
+    runtime_settings = replace(
+        settings,
         host=args.host,
         port=args.port,
         auth_token=args.token,

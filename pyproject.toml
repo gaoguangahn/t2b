@@ -30,10 +30,10 @@ llm-local = [
 where = ["src"]
 
 [tool.setuptools.package-data]
-atestservice = ["config.example.ini", "case_preparation/prompts/*.md", "exploration/prompts/*.md", "script_generation/prompts/*.md", "script_generation/profiles/*.md"]
+atestservice = ["case_preparation/prompts/*.md", "exploration/prompts/*.md", "script_generation/prompts/*.md", "script_generation/profiles/*.md"]
 
 [tool.setuptools.exclude-package-data]
-atestservice = ["config.ini", "*.local.*"]
+"*" = ["config.ini", "models.ini", "*.local.*"]
 
 [tool.uv]
 package = true

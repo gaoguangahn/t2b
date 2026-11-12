@@ -25,8 +25,8 @@ def load_settings(config_path: str | Path | None = None) -> ServerSettings:
     """从 config.ini 读取配置。"""
 
     path = Path(config_path) if config_path else _DEFAULT_CONFIG_PATH
-    cfg = configparser.ConfigParser()
-    cfg.read(str(path), encoding="utf-8")
+    cfg = configparser.ConfigParser(interpolation=None)
+    cfg.read(str(path), encoding="utf-8-sig")
 
     return ServerSettings(
         host=cfg.get("server", "host", fallback="127.0.0.1"),

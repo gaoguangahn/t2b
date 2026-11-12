@@ -187,7 +187,7 @@ class LangChainStructuredLLM:
 
 
 def create_llm(
-    model_name: str = DEFAULT_LLM_MODEL,
+    model_name: str | None = None,
     *,
     model_override: str | None = None,
     supports_vision: bool | None = None,
@@ -198,6 +198,7 @@ def create_llm(
 
     import httpx
 
+    model_name = model_name or DEFAULT_LLM_MODEL
     config = get_llm_model_config(model_name)
     if model_override is not None:
         config.model = model_override

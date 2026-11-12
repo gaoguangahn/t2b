@@ -1,63 +1,69 @@
-"""可用 LLM 模型配置。"""
-
+"""从一份本地 INI 读取模型连接与能力配置。"""
 from __future__ import annotations
 
+import configparser
 from dataclasses import replace
-import os
-from typing import Any
+from pathlib import Path
+from typing import Any, cast
 
-from atestservice.llm.types import LLMCapabilities, LLMModelConfig
+from atestservice.llm.types import (
+    ImageInputPolicy, LLMCapabilities, LLMModelConfig, StructuredOutputMethod,
+)
 
-# Keep connection details outside versioned source. uv can load a local .env file.
-COMAGIC_API_KEY = os.environ.get("COMAGIC_API_KEY", "EMPTY")
-COMAGIC_BASE_URL = os.environ.get("COMAGIC_BASE_URL", "")
-COMAGIC_MODEL = os.environ.get("COMAGIC_MODEL", "gpt-5.5-saas")
-COMAGIC_EMPLOYEE_NO = os.environ.get("COMAGIC_EMPLOYEE_NO", "")
-
-DEFAULT_LLM_MODEL = "company_model"
+_CONFIG_PATH = Path(__file__).with_name("models.ini")
 
 
-def default_llm_models() -> dict[str, LLMModelConfig]:
-    """默认可用模型配置。"""
+def _read_config(config_path: str | Path | None = None) -> configparser.ConfigParser:
+    path = Path(config_path) if config_path is not None else _CONFIG_PATH
+    cfg = configparser.ConfigParser(interpolation=None)
+    cfg.read(path, encoding="utf-8-sig")
+    return cfg
 
-    return {
-        "company_model": LLMModelConfig(
-            base_url=COMAGIC_BASE_URL,
-            model=COMAGIC_MODEL,
-            api_key=COMAGIC_API_KEY,
-            default_headers={"x-cm-employee-no": COMAGIC_EMPLOYEE_NO} if COMAGIC_EMPLOYEE_NO else {},
-            # extra_body={
-            #     "enable_thinking": False,
-            # },
-            structured_output_method="json_schema",
+
+def _models_from_config(cfg: configparser.ConfigParser) -> dict[str, LLMModelConfig]:
+    models = {}
+    for name in cfg.sections():
+        if name == "models":
+            continue
+        section = cfg[name]
+        method = section.get("structured_output_method", "json_schema")
+        policy = section.get("image_input_policy", "error")
+        if method not in {"json_schema", "json_mode", "function_calling"}:
+            raise ValueError(f"模型 {name} 的 structured_output_method 无效：{method}")
+        if policy not in {"error", "drop"}:
+            raise ValueError(f"模型 {name} 的 image_input_policy 无效：{policy}")
+        employee_no = section.get("employee_no", "").strip()
+        models[name] = LLMModelConfig(
+            base_url=section.get("base_url", "").strip(),
+            model=section.get("model", "").strip(),
+            api_key=section.get("api_key", "EMPTY"),
+            default_headers={"x-cm-employee-no": employee_no} if employee_no else {},
+            structured_output_method=cast(StructuredOutputMethod, method),
             capabilities=LLMCapabilities(
-                supports_vision=True,
-                supports_tool_calling=True,
-                supports_json_schema=True,
-                supports_json_mode=True,
+                supports_vision=section.getboolean("supports_vision", fallback=True),
+                supports_tool_calling=section.getboolean("supports_tool_calling", fallback=True),
+                supports_json_schema=section.getboolean("supports_json_schema", fallback=True),
+                supports_json_mode=section.getboolean("supports_json_mode", fallback=True),
             ),
-            image_input_policy="error",
-        ),
-    }
-
-
-def get_llm_model_config(
-    model_name: str = DEFAULT_LLM_MODEL,
-    **overrides: Any,
-) -> LLMModelConfig:
-    """读取模型配置，并允许调试脚本临时覆盖字段。"""
-
-    models = default_llm_models()
-    try:
-        config = models[model_name]
-    except KeyError as exc:
-        available = ", ".join(models)
-        raise ValueError(
-            f"Unknown LLM model config: {model_name!r}. Available models: {available}."
-        ) from exc
-
-    if overrides:
-        config = replace(
-            config, **{k: v for k, v in overrides.items() if v is not None}
+            image_input_policy=cast(ImageInputPolicy, policy),
         )
-    return config
+    return models
+
+
+DEFAULT_LLM_MODEL = _read_config().get("models", "default", fallback="company_model")
+
+
+def default_llm_models(config_path: str | Path | None = None) -> dict[str, LLMModelConfig]:
+    return _models_from_config(_read_config(config_path))
+
+
+def get_llm_model_config(model_name: str | None = None, **overrides: Any) -> LLMModelConfig:
+    """读取指定模型；不传名称时使用 INI 的默认模型。"""
+    cfg = _read_config()
+    models = _models_from_config(cfg)
+    if not models:
+        raise ValueError(f"请在 {_CONFIG_PATH} 配置至少一个模型。")
+    name = model_name if model_name is not None else cfg.get("models", "default", fallback="company_model")
+    if name not in models:
+        raise ValueError(f"unknown model: {name}; available: {', '.join(models)}")
+    return replace(models[name], **{k: v for k, v in overrides.items() if v is not None})

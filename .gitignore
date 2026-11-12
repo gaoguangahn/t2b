@@ -39,12 +39,11 @@ logs/
 # Environment and local config
 .env
 .env.*
-!.env.example
 *.local
 *.local.*
 /src/atestservice/config.ini
 /src/atestservice/config.*.ini
-!/src/atestservice/config.example.ini
+/src/atestservice/llm/models.ini
 *.pem
 *.key
 id_rsa

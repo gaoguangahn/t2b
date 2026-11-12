@@ -19,10 +19,6 @@ from atestservice.llm.messages import (
     text_content,
 )
 from atestservice.llm.models import (
-    COMAGIC_API_KEY,
-    COMAGIC_BASE_URL,
-    COMAGIC_EMPLOYEE_NO,
-    COMAGIC_MODEL,
     DEFAULT_LLM_MODEL,
     default_llm_models,
     get_llm_model_config,
@@ -58,10 +54,6 @@ class MissingLLM:
 
 
 __all__ = [
-    "COMAGIC_API_KEY",
-    "COMAGIC_BASE_URL",
-    "COMAGIC_EMPLOYEE_NO",
-    "COMAGIC_MODEL",
     "DEFAULT_LLM_MODEL",
     "ImageInputPolicy",
     "LangChainStructuredLLM",

@@ -5,14 +5,12 @@
 ## 运行
 
 ```powershell
-Copy-Item src/atestservice/config.example.ini src/atestservice/config.ini
-Copy-Item .env.example .env
-# 编辑 .env，填写实际模型连接信息后启动。
+# 在下述两份本地 INI 中填写配置后启动。
 uv sync --locked
-uv run --env-file .env atestservice
+uv run atestservice
 ```
 
-服务配置位于 `src/atestservice/config.ini`，模型连接通过环境变量或本地 `.env` 提供，格式见 `.env.example`。这两份本地配置被 Git 忽略，只提交模板。实际模型和插件连接需要单独配置；离线测试不需要它们。PM2 启动时请通过进程环境提供相同的模型变量。
+只使用两份本地 INI：服务端配置在 `src/atestservice/config.ini`，模型配置在 `src/atestservice/llm/models.ini`。两份配置被 Git 忽略，仓库不附带个人配置，换机器时自行复制或创建。模型配置可写多个节，通过 `[models]` 的 `default` 选择默认模型；修改后重启服务即可，不需要环境变量或 `.env`。直接启动和 PM2 启动都读取同一份 INI。离线检查不需要连接真实模型或手机，也没有新增测试框架依赖。
 
 ## 当前链路
 
