@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Any, TypedDict
+from typing import Any, NotRequired, TypedDict
 
 from atestservice.runtime.events import AgentEventPublisher
 
@@ -24,6 +24,7 @@ class ExplorationInput(TypedDict, total=False):
 class StepLoopUpdate(TypedDict):
     trajectory: dict[str, Any]
     current_step_result: dict[str, Any]
+    completion_event: NotRequired[dict[str, Any]]
 
 
 class ExplorationUpdate(TypedDict, total=False):

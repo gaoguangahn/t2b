@@ -101,6 +101,13 @@ class ExploreAgentLoopNode:
             step_result["instruction_results"] = progress.snapshot()
             return _step_failed_update(trajectory=trajectory, step_result=step_result)
 
+        async def reject_finish(event: dict[str, Any], message: str) -> None:
+            await publisher.node_finished(
+                stage="exploration", node="step_finish_rejected",
+                payload={**event, "title": "目标块结束请求未通过",
+                         "blocks": [{"type": "text", "text": message}, *event["blocks"][1:]]},
+            )
+
         task_text = render_step_task_text(
             current_step=current_step,
             step_results=step_results,
@@ -183,22 +190,24 @@ class ExploreAgentLoopNode:
                 )
                 continue
 
-            await publisher.node_finished(
-                stage="exploration",
-                node="agent_decision",
-                payload=_decision_event(
-                    round_index=round_index,
-                    decision=decision,
-                    tool_call=tool_call,
-                    step_id=step_id,
-                ),
+            decision_event = _decision_event(
+                round_index=round_index,
+                decision=decision,
+                tool_call=tool_call,
+                step_id=step_id,
             )
+            if decision.kind not in {"finish", "blocker"}:
+                await publisher.node_finished(
+                    stage="exploration", node="agent_decision", payload=decision_event,
+                )
 
             if active is not None and (decision.kind == "instruction" or decision.raw_args.get("complete_current_instruction")):
                 try:
                     validate_completion(active, operations)
                 except ValueError as exc:
                     context.last_result = {"success": False, "message": str(exc)}
+                    if decision.kind == "finish":
+                        await reject_finish(decision_event, str(exc))
                     continue
 
             if decision.raw_args.get("complete_current_instruction") and decision.kind != "instruction":
@@ -209,9 +218,10 @@ class ExploreAgentLoopNode:
                         capture(instructions[progress.index]["id"], "before")
                     active = instructions[progress.index] if progress.index < len(instructions) else None
                     current_step["active_instruction_id"] = active["id"] if active else None
-                    await publisher.node_finished(stage="exploration", node="instruction_completed",
-                        payload=json_event("指令完成", decision.reason, f"{step_id}_progress_{progress.index}.json",
-                                           {"step_id": step_id, "completed_count": progress.index, "checkpoints": checkpoints}))
+                    if decision.kind != "finish" or active is not None:
+                        await publisher.node_finished(stage="exploration", node="instruction_completed",
+                            payload=json_event("指令完成", decision.reason, f"{step_id}_progress_{progress.index}.json",
+                                               {"step_id": step_id, "completed_count": progress.index, "checkpoints": checkpoints}))
 
             if decision.kind == "observe":
                 wait = decision.raw_args.get("wait_seconds", 0)
@@ -245,7 +255,9 @@ class ExploreAgentLoopNode:
                 continue
 
             if decision.kind == "finish" and decision.status == "completed" and progress.index < len(instructions):
-                context.record_result({"success": False, "message": "仍有未报告完成的指令，请先完成当前指令并调用 CompleteInstruction。"})
+                message = "仍有未报告完成的指令，请先完成当前指令并调用 CompleteInstruction。"
+                context.record_result({"success": False, "message": message})
+                await reject_finish(decision_event, message)
                 continue
 
             if decision.kind == "finish":
@@ -262,23 +274,11 @@ class ExploreAgentLoopNode:
                         execution={"success": status == "completed", "message": decision.reason}
                     ),
                 )
-                await publisher.node_finished(
-                    stage="exploration",
-                    node="step_agent_loop",
-                    payload=text_event(
-                        "目标块执行完成" if status == "completed" else "目标块执行失败",
-                        decision.reason,
-                    ),
-                )
-                return {"trajectory": trajectory, "current_step_result": step_result}
+                return {"trajectory": trajectory, "current_step_result": step_result,
+                        "completion_event": decision_event}
 
             if decision.kind == "blocker":
-                await publisher.node_finished(
-                    stage="exploration",
-                    node="step_agent_loop",
-                    payload=text_event("目标块遇到阻塞", decision.reason),
-                )
-                return fail(
+                update = fail(
                     trajectory=trajectory,
                     step_result={
                         "step_id": step_id,
@@ -286,6 +286,8 @@ class ExploreAgentLoopNode:
                         "summary": decision.reason,
                         },
                 )
+                update["completion_event"] = decision_event
+                return update
 
             if decision.action is None:
                 return fail(

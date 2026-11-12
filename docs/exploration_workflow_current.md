@@ -197,7 +197,13 @@ execution.status 统一为 pending/succeeded/failed/unknown。success 只用于�
 
 定位读取保存的 UI，视觉模型可查看对应截图。UI 衔接不证明业务状态等价；证据不足返回 blocked 并保留问题，不移动验证或虚构路径。详见 script_generation_current.md。
 
-## 10. 当前边界
+## 10. 插件进度事件
+
+每个目标块的最终结果只由外层 `case_step_finished` 发布一次，标题按实际状态区分执行完成、执行失败和遇到阻塞。结果事件包含摘要、步骤结果 JSON，以及模型结束决策 JSON（若有）；原始工具调用可在结束决策中查看。结束决策只作为事件详情传递，不加入跨阶段探索结果。
+
+内层不再额外发布 `step_agent_loop` 结束通知，已接受的 CompleteStep / ReportBlocker 决策合入最终结果。CompleteStep 同时完成最后一条指令时也合并通知；其他指令进度、操作与观察事件继续保留。提前结束请求被拒绝时发布 `step_finish_rejected`，不会显示成步骤成功。全部目标块完成后，额外发布一次 `run_case_steps`，标题为“探索阶段完成”。现有事件封装与 blocks 格式不变。
+
+## 11. 当前边界
 
 - 单轮 CaseSpec、轨迹和结果已有具体类型与引用校验；内部运行视图仍允许临时字典。
 - 细粒度手势实际计数、跨步骤对象记忆、自适应等待与完整定位稳定性评估尚未完成。

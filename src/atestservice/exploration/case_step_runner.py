@@ -83,15 +83,22 @@ class CaseStepRunnerNode:
             )
             step_results.append(step_result)
 
+            outcome = {"completed": "执行完成", "error": "执行失败", "blocked": "遇到阻塞"}[step_result["status"]]
+            payload = json_event(
+                f"目标块 {current_step['id']} {outcome}", step_result["summary"],
+                f"step_result_{index + 1:03d}.json", step_result,
+            )
+            # Keep the terminal model decision in this one result event, without
+            # displaying its summary a second time or adding it to persisted IR inputs.
+            completion_event = update.get("completion_event") or {}
+            payload["blocks"].extend(
+                {**block, "title": "查看结束决策"}
+                for block in completion_event.get("blocks", []) if block.get("type") == "json"
+            )
             await publisher.node_finished(
                 stage="exploration",
                 node="case_step_finished",
-                payload=json_event(
-                    f"目标块 {current_step['id']} 执行完成",
-                    step_result["summary"],
-                    f"step_result_{index + 1:03d}.json",
-                    step_result,
-                ),
+                payload=payload,
             )
 
             if step_result["status"] != "completed":
@@ -109,7 +116,7 @@ class CaseStepRunnerNode:
         await publisher.node_finished(
             stage="exploration",
             node="run_case_steps",
-            payload=text_event("目标块执行完成", "全部目标块已执行完成。"),
+            payload=text_event("探索阶段完成", "全部目标块已执行完成，准备生成脚本。"),
         )
         return {
             "trajectory": trajectory,

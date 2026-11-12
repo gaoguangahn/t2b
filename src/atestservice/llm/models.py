@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import configparser
+import json
 from dataclasses import replace
 from pathlib import Path
 from typing import Any, cast
@@ -33,11 +34,21 @@ def _models_from_config(cfg: configparser.ConfigParser) -> dict[str, LLMModelCon
         if policy not in {"error", "drop"}:
             raise ValueError(f"模型 {name} 的 image_input_policy 无效：{policy}")
         employee_no = section.get("employee_no", "").strip()
+        try:
+            extra_body = json.loads(section.get("extra_body", "{}"))
+        except json.JSONDecodeError as error:
+            raise ValueError(
+                f"模型 {name} 的 extra_body 必须是有效 JSON 对象"
+                f"（第 {error.lineno} 行，第 {error.colno} 列）"
+            ) from None
+        if not isinstance(extra_body, dict):
+            raise ValueError(f"模型 {name} 的 extra_body 必须是 JSON 对象")
         models[name] = LLMModelConfig(
             base_url=section.get("base_url", "").strip(),
             model=section.get("model", "").strip(),
             api_key=section.get("api_key", "EMPTY"),
             default_headers={"x-cm-employee-no": employee_no} if employee_no else {},
+            extra_body=extra_body,
             structured_output_method=cast(StructuredOutputMethod, method),
             capabilities=LLMCapabilities(
                 supports_vision=section.getboolean("supports_vision", fallback=True),

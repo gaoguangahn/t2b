@@ -12,6 +12,8 @@ uv run atestservice
 
 只使用两份本地 INI：服务端配置在 `src/atestservice/config.ini`，模型配置在 `src/atestservice/llm/models.ini`。两份配置被 Git 忽略，仓库不附带个人配置，换机器时自行复制或创建。模型配置可写多个节，通过 `[models]` 的 `default` 选择默认模型；修改后重启服务即可，不需要环境变量或 `.env`。直接启动和 PM2 启动都读取同一份 INI。离线检查不需要连接真实模型或手机，也没有新增测试框架依赖。
 
+模型节可通过 `extra_body` 配置接口专用参数，值必须是 JSON 对象，例如 `extra_body = {"enable_thinking": false}`。支持嵌套对象；不填写时使用空对象，不额外发送参数。布尔值使用 JSON 的 `true` / `false`，字段名使用双引号，值后不要追加行尾注释。配置只应用于所属模型，修改后重启服务，具体参数以该模型接口或网关支持情况为准。
+
 模型输出在发送前统一生成并校验严格 Schema；prepare 使用独立的 CaseExtraction 协议，只整理描述与结构，再转换为 CaseSpec，不提前提取参数。工具和实际参数由探索阶段决定，HTTP 接口不变。正常/debug 输出、三阶段模型调用和探索工具均经过相同的 Schema 边界，详见 [模型交互检查说明](docs/llm_schema_contracts.md)。
 
 ## 当前链路
