@@ -1,0 +1,240 @@
+﻿"""Agent loop tool definitions exposed to the LLM."""
+
+from __future__ import annotations
+
+from typing import Any, Literal
+
+from pydantic import BaseModel, ConfigDict, Field
+
+from atestservice.exploration.decisions import LoopActionDecision
+from atestservice.contracts.action import ResolvedAction
+
+
+class _ToolArgs(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    complete_current_instruction: bool = Field(default=False, description="当前指令在本次决策前已完成。先记录当前页为完成边界，再执行本工具；动作将归属下一条指令。最后一条可与 CompleteStep 一起报告。")
+
+    reason: str = Field(
+        min_length=1,
+        description="一句话说明当前可见依据和动作目的。处理遮挡或纠错时说明用途；保留用户的对象选择标准，不复述整个任务，不输出长篇推理。",
+    )
+
+
+class Click(_ToolArgs):
+    """单击当前截图中可见且明确可交互的目标。"""
+
+    bounds: list[int] = Field(min_length=4, max_length=4, description="目标矩形 [x1,y1,x2,y2]，0-1000 归一化坐标。")
+
+
+class DoubleClick(_ToolArgs):
+    """双击当前截图中可见目标，仅在明确需要双击时使用。"""
+
+    bounds: list[int] = Field(min_length=4, max_length=4, description="目标矩形 [x1,y1,x2,y2]，0-1000 归一化坐标。")
+
+
+class LongClick(_ToolArgs):
+    """长按当前截图中可见目标，用于菜单、编辑或明确长按功能。"""
+
+    bounds: list[int] = Field(min_length=4, max_length=4, description="目标矩形 [x1,y1,x2,y2]，0-1000 归一化坐标。")
+
+
+class InputText(_ToolArgs):
+    """向正确且已聚焦的输入框输入原文，不追加回车暗中提交。目标需要提交时，输入后单独执行相应动作。"""
+
+    text: str = Field(min_length=1, description="指令指定的原文，逐字符保留空格、标点和大小写。")
+
+
+class DirectionSwipe(_ToolArgs):
+    """按方向滑动当前页面或可滚动区域，适合普通列表/页面滚动。若同一用户步骤明确包含滑动次数或间隔，应使用 times 和 interval 参数表达完整语义。"""
+
+    direction: Literal["up", "down", "left", "right"] = Field(description="手指滑动方向。")
+    times: int | None = Field(default=None, ge=1, le=10, description="本次连续滑动次数。明确次数应填写；超过单次上限则结合账本分批，不截断总次数，也不重做已成功请求的批次。")
+    interval: float | None = Field(default=None, ge=0, description="多次滑动之间的间隔秒数。仅当同一用户步骤明确要求滑动间隔时填写。")
+
+
+class CoordinateSwipe(_ToolArgs):
+    """按起止点滑动，适合明确需要从某个坐标滑到另一个坐标的场景。"""
+
+    start_x: int = Field(ge=0, le=1000, description="起点 x，0-1000 归一化坐标。")
+    start_y: int = Field(ge=0, le=1000, description="起点 y，0-1000 归一化坐标。")
+    end_x: int = Field(ge=0, le=1000, description="终点 x，0-1000 归一化坐标。")
+    end_y: int = Field(ge=0, le=1000, description="终点 y，0-1000 归一化坐标。")
+    times: int | None = Field(default=None, ge=1, le=10, description="连续滑动次数。仅当同一用户步骤明确要求滑动多次时填写；填写后表示本次工具调用连续完成这些滑动。")
+    interval: float | None = Field(default=None, ge=0, description="多次滑动之间的间隔秒数。仅当同一用户步骤明确要求滑动间隔时填写。")
+
+
+class Drag(_ToolArgs):
+    """拖动明确可拖拽对象，不用于普通页面滚动。"""
+
+    start_x: int = Field(ge=0, le=1000, description="起点 x，0-1000 归一化坐标。")
+    start_y: int = Field(ge=0, le=1000, description="起点 y，0-1000 归一化坐标。")
+    end_x: int = Field(ge=0, le=1000, description="终点 x，0-1000 归一化坐标。")
+    end_y: int = Field(ge=0, le=1000, description="终点 y，0-1000 归一化坐标。")
+    duration: float | None = Field(default=None, gt=0, description="拖动持续时间，单位秒。")
+
+
+class Back(_ToolArgs):
+    """执行一次返回。一次返回不保证到达应用首页；依据新页面决定是否继续返回或导航。"""
+
+
+class Home(_ToolArgs):
+    """返回系统桌面，仅用于明确的桌面要求；不能代替返回应用首页。"""
+
+
+class OpenMultitask(_ToolArgs):
+    """打开系统最近任务界面。"""
+
+
+class OpenControl(_ToolArgs):
+    """打开系统控制中心。"""
+
+
+class OpenNotification(_ToolArgs):
+    """打开系统通知栏。"""
+
+
+class StartApp(_ToolArgs):
+    """按指定显示名称启动或进入应用。通用启动要求使用此方法，不点击桌面图标替代，不猜相似应用。"""
+
+    app_name: str = Field(min_length=1, description="应用显示名称，例如 设置。")
+
+
+class StopApp(_ToolArgs):
+    """仅在当前要求明确停止应用时使用。不能为返回首页、关闭面板或绕过阻塞而自行重置应用。"""
+
+
+class Wait(_ToolArgs):
+    """执行用户明确要求的固定等待或观看时长。为判断加载页面而等待应使用 Observe，不能抵扣用户要求的时长。"""
+
+    duration: float = Field(gt=0, le=10, description="本次固定等待秒数。超过单次上限时分批完成原时长，结合账本防止重复或截断。")
+
+
+class CompleteStep(_ToolArgs):
+    """当前目标块已经完成，不需要继续操作。"""
+
+    status: Literal["completed", "error"] = Field(default="completed", description="当前目标块结果；完成单轮操作时使用 completed，执行错误时使用 error。")
+    summary: str = Field(min_length=1, description="一句话总结当前目标块实际完成情况或失败原因，用于后续目标块上下文。")
+
+
+class CompleteInstruction(_ToolArgs):
+    """当前语义要求已完成才报告，保存当前页面后推进。一个要求可以对应多个动作，不能只因一次命令成功就报告导航已完成。"""
+    summary: str = Field(min_length=1, description="当前指令实际完成情况。")
+
+
+class Observe(_ToolArgs):
+    """仅在加载或页面信息不足时重新观察。动作后已自动采集，无需例行调用；不是用户业务等待。"""
+    wait_seconds: float = Field(default=0, ge=0, le=5)
+
+
+class ReportBlocker(_ToolArgs):
+    """遇到无法继续处理的阻塞，例如必须登录、缺少权限或任务信息不足。"""
+
+    summary: str = Field(min_length=1, description="一句话总结阻塞原因和已尝试的关键动作，用于后续诊断。")
+
+
+EXPLORE_ACTION_TOOLS = [
+    Click, DoubleClick, LongClick, InputText, DirectionSwipe, CoordinateSwipe, Drag,
+    Back, Home, OpenMultitask, OpenControl, OpenNotification, StartApp, StopApp,
+    Wait, CompleteStep, CompleteInstruction, ReportBlocker, Observe,
+]
+
+_CLICK_TOOL_ACTIONS = {"Click": "click", "DoubleClick": "double_click", "LongClick": "long_click"}
+_SIMPLE_TOOL_ACTIONS = {
+    "Back": "back", "Home": "home", "OpenMultitask": "open_multitask",
+    "OpenControl": "open_control", "OpenNotification": "open_notification", "StopApp": "stop_app",
+}
+
+
+def tool_call_to_decision(tool_call: dict[str, Any]) -> LoopActionDecision:
+    """Convert one model tool call to an internal decision."""
+
+    name = str(tool_call.get("name") or "")
+    args = tool_call.get("args") or {}
+    schema = next((tool for tool in EXPLORE_ACTION_TOOLS if tool.__name__ == name), None)
+    if schema is None:
+        raise ValueError(f"unknown tool: {name}")
+    args = schema.model_validate(args).model_dump(exclude_none=True)
+
+    if not isinstance(args, dict):
+        raise ValueError(f"tool args must be object, got {type(args).__name__}")
+
+    reason = str(args.get("reason") or "").strip()
+    if not reason:
+        raise ValueError(f"tool {name} requires reason")
+
+    if name == "Observe":
+        return LoopActionDecision(kind="observe", reason=reason, raw_tool_name=name, raw_args=args)
+
+    if name == "CompleteStep":
+        status = str(args.get("status") or "completed").strip()
+        if status not in {"completed", "error"}:
+            raise ValueError("CompleteStep status must be completed or error")
+        summary = str(args.get("summary") or reason).strip()
+        return LoopActionDecision(
+            kind="finish", reason=summary, raw_tool_name=name, raw_args=args,
+            status=status,
+        )
+
+    if name == "CompleteInstruction":
+        return LoopActionDecision(kind="instruction", reason=str(args.get("summary") or reason), raw_tool_name=name, raw_args=args)
+
+    if name == "ReportBlocker":
+        summary = str(args.get("summary") or reason).strip()
+        return LoopActionDecision(
+            kind="blocker", reason=summary, raw_tool_name=name, raw_args=args,
+            status="blocked",
+        )
+
+    action = _tool_call_to_action(name, args)
+    return LoopActionDecision(
+        kind="action", reason=reason, raw_tool_name=name, raw_args=args,
+        action=action,
+    )
+
+
+def _tool_call_to_action(name: str, args: dict[str, Any]) -> ResolvedAction:
+    if name in _CLICK_TOOL_ACTIONS:
+        payload = {"action": _CLICK_TOOL_ACTIONS[name], "args": {"bounds": _bounds(args)}}
+    elif name == "InputText":
+        payload = {"action": "input_text", "args": {"text": args.get("text")}}
+    elif name == "DirectionSwipe":
+        swipe_args: dict[str, Any] = {"direction": args.get("direction")}
+        if args.get("times") is not None:
+            swipe_args["times"] = args.get("times")
+        if args.get("interval") is not None:
+            swipe_args["interval"] = args.get("interval")
+        payload = {"action": "swipe", "args": swipe_args}
+    elif name == "CoordinateSwipe":
+        swipe_args = {
+            "start": {"x": args.get("start_x"), "y": args.get("start_y")},
+            "end": {"x": args.get("end_x"), "y": args.get("end_y")},
+        }
+        if args.get("times") is not None:
+            swipe_args["times"] = args.get("times")
+        if args.get("interval") is not None:
+            swipe_args["interval"] = args.get("interval")
+        payload = {"action": "swipe", "args": swipe_args}
+    elif name == "Drag":
+        drag_args: dict[str, Any] = {
+            "start": {"x": args.get("start_x"), "y": args.get("start_y")},
+            "end": {"x": args.get("end_x"), "y": args.get("end_y")},
+        }
+        if args.get("duration") is not None:
+            drag_args["duration"] = args.get("duration")
+        payload = {"action": "drag", "args": drag_args}
+    elif name in _SIMPLE_TOOL_ACTIONS:
+        payload = {"action": _SIMPLE_TOOL_ACTIONS[name], "args": {}}
+    elif name == "StartApp":
+        payload = {"action": "start_app", "args": {"app_name": args.get("app_name")}}
+    elif name == "Wait":
+        payload = {"action": "wait", "args": {"duration": args.get("duration")}}
+    else:
+        raise ValueError(f"unknown explore tool call: {name}")
+    return ResolvedAction.model_validate(payload)
+
+
+def _bounds(args: dict[str, Any]) -> list[int]:
+    bounds = args.get("bounds") or []
+    if len(bounds) != 4:
+        raise ValueError("click bounds must be [x1,y1,x2,y2]")
+    return [int(value) for value in bounds]
