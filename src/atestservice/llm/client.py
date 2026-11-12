@@ -126,7 +126,7 @@ class LangChainStructuredLLM:
             )
 
         wire_tools = [strict_tool(tool) for tool in tools]
-        model = self._chat_model(options).bind_tools(wire_tools, tool_choice="any", strict=True)
+        model = self.chat_model.bind_tools(wire_tools, tool_choice="any", strict=True, **self._call_kwargs(options))
         return await model.ainvoke(self._normalize_prompt(prompt))
 
     def _structured_request(self, prompt, schema, options, *, include_raw):
@@ -149,7 +149,7 @@ class LangChainStructuredLLM:
         kwargs = {"method": method, "include_raw": include_raw}
         if method != "json_mode":
             kwargs["strict"] = True
-        model = self._chat_model(options).with_structured_output(wire, **kwargs)
+        model = self.chat_model.with_structured_output(wire, **kwargs, **self._call_kwargs(options))
         messages = self._normalize_prompt(prompt)
         if method in {"json_mode", "json_schema"}:
             instruction = "Return one JSON object matching the supplied schema; include every declared field."
@@ -170,11 +170,12 @@ class LangChainStructuredLLM:
             image_policy=self.config.image_input_policy,
         )
 
-    def _chat_model(self, options: LLMCallOptions | None = None) -> Any:
-        """返回应用了单次调用参数的模型 runnable。"""
+    @staticmethod
+    def _call_kwargs(options: LLMCallOptions | None = None) -> dict[str, Any]:
+        """Bind parameters together with tools/schema; a prior Runnable bind is lost."""
 
         if options is None:
-            return self.chat_model
+            return {}
 
         kwargs: dict[str, Any] = {}
         if options.temperature is not None:
@@ -186,9 +187,7 @@ class LangChainStructuredLLM:
         if options.timeout is not None:
             kwargs["timeout"] = options.timeout
 
-        if not kwargs:
-            return self.chat_model
-        return self.chat_model.bind(**kwargs)
+        return kwargs
 
     def _normalize_prompt(self, prompt: Any) -> Any:
         if isinstance(prompt, list):

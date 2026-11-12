@@ -249,6 +249,28 @@ class TransportTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(decision.action.action, "click")
         self.assertEqual(len(provider.requests[0]["tools"]), len(EXPLORE_ACTION_TOOLS))
 
+    async def test_call_parameters_reach_sdk_after_tools_and_schema_are_bound(self):
+        options = LLMCallOptions(temperature=0.2, top_p=0.9, max_completion_tokens=321, timeout=17)
+        for method in ("json_schema", "function_calling", "json_mode", "explore"):
+            with self.subTest(method=method):
+                value = ({"reason": "明确目标", "complete_current_instruction": False, "bounds": [100, 100, 200, 200]}
+                         if method == "explore" else RESPONSES[-1][1])
+                provider = OfflineProvider(value)
+                timeouts = []
+                def capture(request):
+                    timeouts.append(request.extensions.get("timeout", {}))
+                    return provider(request)
+                llm = self.llm(capture, method if method != "explore" else "json_schema")
+                if method == "explore":
+                    await llm.invoke_tool_message("fixture", EXPLORE_ACTION_TOOLS, options=options)
+                else:
+                    await llm.invoke_structured("fixture", CodegenResult, options=options)
+                payload = provider.requests[0]
+                self.assertEqual(payload["temperature"], 0.2)
+                self.assertEqual(payload["top_p"], 0.9)
+                self.assertEqual(payload["max_completion_tokens"], 321)
+                self.assertEqual(timeouts[0]["read"], 17)
+
     async def test_diagnostic_call_uses_same_schema_without_printing(self):
         provider = OfflineProvider(RESPONSES[-1][1])
         output = io.StringIO()

@@ -11,6 +11,7 @@ from atestservice.runtime.events import NoopAgentEventPublisher
 from atestservice.llm import LLMCallOptions, StructuredLLM, create_llm
 from atestservice.exploration.context import AgentLoopContext, tool_result_content
 from atestservice.exploration.decisions import LoopActionDecision
+from atestservice.exploration.decision_request import DecisionResponseError, request_decision
 from atestservice.exploration.prompts import SYSTEM_PROMPT
 from atestservice.exploration.context.rendering import (
     render_recent_step_actions,
@@ -18,11 +19,7 @@ from atestservice.exploration.context.rendering import (
 )
 from atestservice.exploration.context.facts import parameter_action_ledger
 from atestservice.exploration.context.swipe_feedback import last_swipe_feedback
-from atestservice.exploration.tools import (
-    EXPLORE_ACTION_TOOLS,
-    ActionExecutor,
-    tool_call_to_decision,
-)
+from atestservice.exploration.tools import ActionExecutor
 from atestservice.exploration.trace import build_operation_entry
 from atestservice.exploration.observations import ObservationStore
 from atestservice.exploration.observations.media import screen_size_from_snapshot
@@ -37,7 +34,7 @@ from atestservice.runtime.event_payloads import json_event, screenshot_event, te
 _EXPLORE_OPTIONS = LLMCallOptions(
     temperature=0.2,
     top_p=0.9,
-    max_completion_tokens=2048,
+    max_completion_tokens=8192,
     timeout=90.0,
     structured_output_method="function_calling",
 )
@@ -137,68 +134,43 @@ class ExploreAgentLoopNode:
             context.task_text += "\n次数与时长账本（全块累计；requested_total 是请求量，不是实测完成量）：\n" + json.dumps(
                 parameter_action_ledger(trajectory, step_id), ensure_ascii=False)
             current_observation = observations[-1]
-            captured_at = current_observation.get("capture_finished_at")
-            if captured_at:
-                from datetime import datetime, timezone
-                age = (datetime.now(timezone.utc) - datetime.fromisoformat(captured_at)).total_seconds()
-                if age > self.config.observation_max_age_seconds:
-                    current_observation = await self._observe_and_record(index=len(observations), publisher=publisher)
-                    current_observation["capture_reason"] = "pre_decision_refresh"
-                    observations.append(current_observation)
-            state["current_observation_id"] = current_observation["id"]
-            recent_actions = render_recent_step_actions(
-                trajectory=trajectory,
-                step_id=step_id,
-                limit=6,
-            )
-            progress_summary = "当前目标块已执行动作：\n" + recent_actions
-            swipe_feedback = last_swipe_feedback(trajectory, step_id=step_id,
-                instruction_id=active["id"] if active else None, current_observation_id=current_observation["id"])
-            if swipe_feedback is not None:
-                progress_summary += "\n最近滑动前后UI参考：\n" + json.dumps(swipe_feedback, ensure_ascii=False)
-            messages = context.build_messages(
-                llm=self.llm,
-                observation=current_observation,
-                progress_summary=progress_summary,
-            )
 
-            assistant_message = await self.llm.invoke_tool_message(
-                messages, EXPLORE_ACTION_TOOLS, options=_EXPLORE_OPTIONS
-            )
-            tool_calls = getattr(assistant_message, "tool_calls", None) or []
-            if len(tool_calls) != 1:
+            async def build_decision_messages(correction):
+                nonlocal current_observation
+                current_observation = observations[-1]
+                captured_at = current_observation.get("capture_finished_at")
+                if captured_at:
+                    from datetime import datetime, timezone
+                    age = (datetime.now(timezone.utc) - datetime.fromisoformat(captured_at)).total_seconds()
+                    if age > self.config.observation_max_age_seconds:
+                        current_observation = await self._observe_and_record(index=len(observations), publisher=publisher)
+                        current_observation["capture_reason"] = "pre_decision_refresh"
+                        observations.append(current_observation)
+                state["current_observation_id"] = current_observation["id"]
+                recent_actions = render_recent_step_actions(trajectory=trajectory, step_id=step_id, limit=6)
+                progress_summary = "当前目标块已执行动作：\n" + recent_actions
+                swipe_feedback = last_swipe_feedback(trajectory, step_id=step_id,
+                    instruction_id=active["id"] if active else None, current_observation_id=current_observation["id"])
+                if swipe_feedback is not None:
+                    progress_summary += "\n最近滑动前后UI参考：\n" + json.dumps(swipe_feedback, ensure_ascii=False)
+                if correction:
+                    progress_summary += "\n本轮响应纠正要求：\n" + correction
+                return context.build_messages(llm=self.llm, observation=current_observation, progress_summary=progress_summary)
+
+            try:
+                decision, tool_call = await request_decision(self.llm, build_messages=build_decision_messages,
+                    options=_EXPLORE_OPTIONS, publisher=publisher, step_id=step_id,
+                    instruction_id=active["id"] if active else None, round_index=round_index,
+                    retry_limit=self.config.decision_retry_limit)
+            except DecisionResponseError as error:
                 return fail(
                     trajectory=trajectory,
                     step_result={
                         "step_id": step_id,
                         "status": "error",
-                        "summary": f"模型工具调用数量异常：expected exactly one tool call, got {len(tool_calls)}",
+                        "summary": str(error),
                         },
                 )
-
-            tool_call = tool_calls[0]
-            tool_call_id = str(tool_call.get("id") or f"call_{len(operations) + 1}")
-            try:
-                decision = tool_call_to_decision(tool_call)
-            except Exception as exc:
-                execution_error_count += 1
-                if execution_error_count >= self.config.execution_error_limit:
-                    return fail(
-                        trajectory=trajectory,
-                        step_result={
-                            "step_id": step_id,
-                            "status": "error",
-                            "summary": f"工具调用无效且重试超限：{exc}",
-                                },
-                    )
-                context.record_result(tool_result_content(
-                        execution={
-                            "success": False,
-                            "message": f"工具调用无效：{exc}。请修正后重新调用。",
-                        }
-                    ),
-                )
-                continue
 
             decision_event = _decision_event(
                 round_index=round_index,

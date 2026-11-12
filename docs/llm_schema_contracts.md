@@ -43,6 +43,8 @@ llm/client.py 显式传入转换后的字典，不依赖 SDK 从 Pydantic 类隐
 
 第三阶段的路径计划、目标解析和编码统一遵守模型 INI 的 structured_output_method，不再由节点写死 function_calling 覆盖配置；各节点仍保留自己的温度、输出长度和超时。探索的手机动作继续使用工具调用，这与结构化结果的格式配置是两种用途。
 
+LLMCallOptions通过bind_tools或with_structured_output的同一次绑定传入，不先创建Runnable绑定再调用这些方法，避免温度、top_p、max_completion_tokens、timeout被丢弃。离线测试覆盖探索工具及三种结构化输出模式的最终HTTP请求，并检查HTTP超时配置。
+
 json_schema 和 json_mode 都在消息正文中明确要求输出 JSON，以满足部分千问接口的关键词检查。json_schema 的结构仍通过 response_format 传递，正文不重复整份 Schema；json_mode 的正文包含完整 Schema。配置 json_schema 却收到 json_object 相关错误，可能涉及网关转换或下游接口校验，单凭错误不能确认实际是否仍有严格结构约束。本地不自动降级，返回结果继续由原 Pydantic 类型校验。
 
 ## 审查范围
@@ -67,6 +69,8 @@ ScriptIR 只是代码生成的输入数据，不作为模型的响应 Schema 发
 Schema 转换、发送前校验和异常传播继续生效，保留正常运行日志。结构化响应解析失败时，额外记录一条WARNING：模型、实际输出方式、Schema名、finish_reason、token用量、工具名与参数状态（empty_string/null/empty_object等）；不打印请求、参数正文或推理内容。正常调用在同一次请求中保留LangChain响应消息到完成校验，再返回类型化结果；失败继续抛出原异常类型，第一阶段纠正逻辑仍可处理。
 
 `invoke_structured_debug` 返回响应 metadata、解析错误和transport摘要，本身不打印；非法结构也能取得诊断，不再在构造诊断前直接抛出Pydantic错误。工具空参数在SDK中可能被解析为{}，因此仅凭 input_value={} 不能判断服务端原始输出。当前LangChain对有效工具参数不保留原始字符串；日志明确arguments_source=parsed，此时空字符串与{}都报告empty_object，不能再区分原始值；旧版本保留原始参数时标记raw。离线回归分别模拟空字符串、{}与finish_reason=length，均可复现targets缺失，并检查解析层级与截断标志，不声称恢复已丢失的原始值。
+
+探索的invoke_tool_message响应由exploration/decision_request.py检查，复用上述transport摘要，另外记录有效和损坏调用数量、步骤/指令/轮次/尝试序号。默认仅对无效决策响应纠正重试一次；正常路径不增加调用，提供方配置错误不走该纠正逻辑。被拒绝的响应不会下发手机动作，已经执行的命令与结果unknown不在此处自动重放。
 
 DeepSeek兼容性需以实际接口为准。官方JSON Output使用json_object；可显式配置structured_output_method=json_mode，工程会将完整Schema加入提示词，并在本地继续校验。它不保证必填字段一定生成。官方严格工具调用要求Beta入口，且Schema子集不支持minLength/maxLength、minItems/maxItems等，不能只凭strict=true认定当前兼容网关已强约束；工程不自动改入口、删除业务约束或降级模式。依据：[DeepSeek JSON Output](https://api-docs.deepseek.com/guides/json_mode/)、[DeepSeek Tool Calls](https://api-docs.deepseek.com/guides/tool_calls/)。
 

@@ -14,6 +14,7 @@ class AgentConfig:
     step_attempt_limit: int = 12
     non_step_plan_limit: int = 10
     execution_error_limit: int = 3
+    decision_retry_limit: int = 1
     screenshot_scale_factor: float = 0.5
     observation_max_age_seconds: float = 30.0
     consecutive_observe_limit: int = 3
