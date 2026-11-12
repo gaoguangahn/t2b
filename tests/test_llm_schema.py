@@ -23,10 +23,14 @@ from atestservice.script_generation.planning.models import PlanningResponse
 from atestservice.script_generation.targeting.models import TargetResponse
 
 
+INSTRUCTION_TEXT = '输入原文「 a  b\n$test`" 」，向上滑动2次，每次间隔2.5秒'
 CASE = {"case_name": "搜索", "case_goal": "搜索原文", "steps": [{"id": "s1", "goal": "搜索原文", "repeat": 3,
-        "instructions": [{"id": "i1", "text": "输入指定原文", "kind": "ui", "parameters": [
-            {"name": "text", "value": ' a  b\n$test`" '}, {"name": "times", "value": 2}, {"name": "duration", "value": 2.5}]}]}],
+        "instructions": [{"id": "i1", "text": INSTRUCTION_TEXT, "kind": "ui"}]}],
         "verifications": [{"id": "v1", "goal": "验证不存在的提示", "anchor": {"step_id": "s1", "instruction_id": "i1", "position": "after"}, "scope": "each_iteration"}]}
+
+
+class OpenParameters(BaseModel):
+    parameters: dict[str, str]
 
 RESPONSES = [
     (CaseExtraction, CASE),
@@ -78,8 +82,7 @@ class SchemaTests(unittest.TestCase):
 
     def test_business_dictionary_is_rejected_instead_of_silently_closed(self):
         with self.assertRaisesRegex(ModelSchemaError, "parameters.*open dictionaries"):
-            strict_schema(CaseSpec)
-        # Business parameters still accept a dict; the public stage boundary is unchanged.
+            strict_schema(OpenParameters)
         self.assertEqual(CaseSpec(case_name="x").schema_version, "2.0")
 
     def test_required_and_additional_properties_failures_are_detected_recursively(self):
@@ -88,7 +91,7 @@ class SchemaTests(unittest.TestCase):
         with self.assertRaisesRegex(ModelSchemaError, "required"):
             validate_strict_schema(wire)
         wire = strict_schema(CaseExtraction)
-        wire["$defs"]["ParameterEntry"]["additionalProperties"] = True
+        wire["$defs"]["ExtractedInstruction"]["additionalProperties"] = True
         with self.assertRaisesRegex(ModelSchemaError, "additionalProperties"):
             validate_strict_schema(wire)
 
@@ -100,18 +103,18 @@ class SchemaTests(unittest.TestCase):
         self.assertNotIn("default", index)
         self.assertIn({"type": "null"}, index["anyOf"])
 
-    def test_model_extraction_keeps_parameters_and_rejects_duplicates(self):
+    def test_model_extraction_keeps_description_and_rejects_parameter_table(self):
         case = CaseExtraction.model_validate(CASE).to_case_spec()
         self.assertEqual(case.steps[0].repeat, 3)
-        parameters = case.steps[0].instructions[0].parameters
-        self.assertEqual(parameters, {"text": ' a  b\n$test`" ', "times": 2, "duration": 2.5})
-        self.assertIsInstance(parameters["times"], int)
-        self.assertIsInstance(parameters["duration"], float)
+        instruction = case.steps[0].instructions[0]
+        self.assertEqual(instruction.text, INSTRUCTION_TEXT)
+        self.assertEqual(set(instruction.model_dump()), {"id", "text", "kind"})
         self.assertEqual(case.verifications[0].goal, "验证不存在的提示")
         self.assertNotIn("source_revision", strict_schema(CaseExtraction)["properties"])
         broken = deepcopy(CASE)
-        broken["steps"][0]["instructions"][0]["parameters"].append({"name": "times", "value": 99})
-        with self.assertRaisesRegex(ValidationError, "duplicate"):
+        self.assertNotIn("parameters", strict_schema(CaseExtraction)["$defs"]["ExtractedInstruction"]["properties"])
+        broken["steps"][0]["instructions"][0]["parameters"] = {}
+        with self.assertRaises(ValidationError):
             CaseExtraction.model_validate(broken)
 
     def test_reference_validation_still_applies_after_extraction(self):
@@ -166,11 +169,12 @@ class TransportTests(unittest.IsolatedAsyncioTestCase):
                     self.assertEqual(result.model_dump(mode="json"), schema.model_validate(value).model_dump(mode="json"))
                     self.assertEqual(len(provider.requests), 1)
 
-    async def test_real_prepare_path_converts_wire_list_back_to_case_dict(self):
+    async def test_real_prepare_path_preserves_description_without_parameter_extraction(self):
         provider = OfflineProvider(CASE)
         parser = CaseParser(self.llm(provider))
         case = await parser.parse("fixture input")
-        self.assertEqual(case.steps[0].instructions[0].parameters["text"], ' a  b\n$test`" ')
+        self.assertEqual(case.steps[0].instructions[0].text, INSTRUCTION_TEXT)
+        self.assertNotIn("parameters", case.steps[0].instructions[0].model_dump())
         self.assertEqual(len(case.source_revision), 64)
         wire = provider.requests[0]["response_format"]["json_schema"]
         self.assertEqual(wire["name"], "CaseExtraction")
@@ -198,8 +202,8 @@ class TransportTests(unittest.IsolatedAsyncioTestCase):
         provider = OfflineProvider({})
         output = io.StringIO()
         with redirect_stdout(output), self.assertRaisesRegex(ModelSchemaError, "parameters"):
-            await self.llm(provider, debug=True).invoke_structured("private", CaseSpec)
-        self.assertIn("Preparing schema=CaseSpec", output.getvalue())
+            await self.llm(provider, debug=True).invoke_structured("private", OpenParameters)
+        self.assertIn("Preparing schema=OpenParameters", output.getvalue())
         self.assertEqual(provider.requests, [])
 
     async def test_json_mode_carries_schema_instruction_and_validates_locally(self):

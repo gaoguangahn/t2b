@@ -48,9 +48,3 @@ def validate_action(instruction, action):
     required = rule.action if rule else None
     if required and action.action != required:
         raise ValueError(f"当前操作必须使用 {required}，不能以其他动作替代。")
-    parameters = instruction.get("parameters", {})
-    for key in ("app_name", "text"):
-        expected = parameters.get(key)
-        actual = getattr(action.args, key, None)
-        if expected is not None and actual is not None and actual != expected:
-            raise ValueError(f"{key} 必须使用原值 {expected!r}")

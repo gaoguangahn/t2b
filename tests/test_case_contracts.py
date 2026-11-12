@@ -7,6 +7,16 @@ from atestservice.contracts.case import CaseSpec
 
 
 class CaseContractTests(unittest.TestCase):
+    def test_instruction_contains_description_not_extracted_parameters(self):
+        text = '输入原文「 a  b\n$test`" 」，向上滑动3次，每次间隔2秒'
+        case = CaseSpec(case_name="literal", steps=[{"id": "s1", "goal": "输入后浏览", "repeat": 2,
+                        "instructions": [{"id": "i1", "text": text, "kind": "ui"}]}])
+        instruction = case.model_dump()["steps"][0]["instructions"][0]
+        self.assertEqual(instruction, {"id": "i1", "text": text, "kind": "ui"})
+        with self.assertRaises(ValidationError):
+            CaseSpec(case_name="old", steps=[{"id": "s1", "goal": "输入", "instructions": [
+                {"id": "i1", "text": "输入", "parameters": {"text": "不再接受的参数表"}}]}])
+
     def test_repeat_and_literal_values_survive_serialization(self):
         text = '输入 "a  b" + C++'
         case = CaseSpec.model_validate({

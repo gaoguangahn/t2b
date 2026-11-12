@@ -19,9 +19,6 @@ def render_case(case: CaseSpec) -> str:
         for instruction in step.instructions:
             verifies(step.id, instruction.id, "before", "each_iteration")
             lines.append(f"  操作：{instruction.text}")
-            if instruction.parameters:
-                import json
-                lines.append("  明确参数：" + json.dumps(instruction.parameters, ensure_ascii=False))
             verifies(step.id, instruction.id, "after", "each_iteration")
         verifies(step.id, None, "after", "each_iteration")
         if step.repeat > 1:

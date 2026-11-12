@@ -14,7 +14,7 @@ uv run atestservice
 
 排查结构化输出错误时，在实际使用的模型节添加 `debug_schema = true`，重启服务后查看控制台的 `[LLM Schema Debug]`。日志包含依赖版本及 SDK 最终发送的 `response_format`、工具 Schema 等，不包含请求头、用例消息或截图。默认关闭，排查结束后改回 `false`。
 
-模型输出在发送前统一生成并校验严格 Schema；prepare 使用独立的 CaseExtraction 协议，再转换为原有 CaseSpec，参数字典和插件接口不变。正常/debug 输出、三阶段模型调用和探索工具均经过相同的 Schema 边界，详见 [模型交互检查说明](docs/llm_schema_contracts.md)。
+模型输出在发送前统一生成并校验严格 Schema；prepare 使用独立的 CaseExtraction 协议，只整理描述与结构，再转换为 CaseSpec，不提前提取参数。工具和实际参数由探索阶段决定，HTTP 接口不变。正常/debug 输出、三阶段模型调用和探索工具均经过相同的 Schema 边界，详见 [模型交互检查说明](docs/llm_schema_contracts.md)。
 
 ## 当前链路
 
@@ -65,7 +65,7 @@ src/atestservice/
 
 ## 关键结构
 
-CaseSpec 包含 steps 与 verifications。step 保留 goal、repeat 和有序 instructions；verification 使用 anchor(step_id、可选 instruction_id、before/after) 和 scope(each_iteration/outside_repeat)。显式参数保留在 instruction.parameters 中。
+CaseSpec 包含 steps 与 verifications。step 保留 goal、repeat 和有序 instructions；verification 使用 anchor(step_id、可选 instruction_id、before/after) 和 scope(each_iteration/outside_repeat)。instruction 只有 id、text、kind；用户指定的原文、次数、时长等完整保留在 text，实际调用参数记录在 operations[].action.args。
 
 探索记录使用 semantic_ref.step_id/instruction_id 关联用户操作。CompleteInstruction 报告指令完成，CompleteStep 报告单轮目标块完成。探索状态为 completed/blocked/error，外层任务生命周期仍由 Run 管理。
 
@@ -100,7 +100,7 @@ CaseSpec 包含 steps 与 verifications。step 保留 goal、repeat 和有序 in
 
 - 模型使用状态式上下文：单轮任务、明确指令、完成游标、近期动作和最近结果、当前截图，不回灌 assistant/tool 历史。
 - Observe 是额外采集控制；默认动作后自动观察，额外观察不生成 operation，连续观察与等待有预算。
-- Instruction.kind 表达语义类别，exploration/policy.py 在下发前约束规定方法与原值参数；强制方法未成功执行不能报告完成。
+- Instruction.kind 表达语义类别，exploration/policy.py 在下发前约束规定方法；强制方法未成功执行不能报告完成。探索模型依据完整描述填写实际参数，工具类型校验和调用账本继续保留，不依赖预提取参数表。
 - 可通过 complete_current_instruction 在下一动作或 CompleteStep 中报告前一指令完成，仍兼容独立 CompleteInstruction。检查点先绑定当前页面，再推进下一条。
 - 过期刷新在模型决策前进行，不再仅因推理耗时超过 30 秒持续拒绝动作。
 - progress.py 管理指令游标，checkpoints.py 绑定验证证据；轨迹使用 OperationRecord 并校验页面引用和顺序。

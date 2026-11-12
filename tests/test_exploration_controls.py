@@ -65,12 +65,14 @@ class ExploreControlTests(unittest.IsolatedAsyncioTestCase):
             ("CompleteStep", {"summary": "done", "complete_current_instruction": True}),
         ])
         case = CaseSpec(case_name="launch", steps=[{"id": "s1", "goal": "启动应用 A", "instructions": [
-            {"id": "i1", "text": "启动应用 A", "kind": "app_launch", "parameters": {"app_name": "应用 A"}},
+            {"id": "i1", "text": "启动应用 A", "kind": "app_launch"},
         ]}])
         state = await node({"case_spec": case.model_dump(mode="json")})
         self.assertEqual(state["run"]["status"], "done")
         self.assertEqual(node.step_loop.executor.execute.await_count, 1)
         self.assertEqual(node.step_loop.executor.execute.call_args.args[0].action, "start_app")
+        self.assertEqual(state["trajectory"]["operations"][0]["action"]["args"]["app_name"], "应用 A")
+        self.assertIn("启动应用 A", str(llm.requests[0]))
         self.assertIn("start_app", str(llm.requests[1]))
 
     async def test_progress_can_advance_with_next_action(self):

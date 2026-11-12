@@ -85,7 +85,7 @@ class ExploreAgentLoopNode:
         max_rounds = int(run.get("step_max_rounds") or self.config.step_attempt_limit)
         execution_error_count = 0
 
-        instructions = current_step.get("instructions") or [{"id": step_id + "_instruction", "text": current_step["goal"], "parameters": {}}]
+        instructions = current_step.get("instructions") or [{"id": step_id + "_instruction", "text": current_step["goal"]}]
         max_rounds = max(max_rounds, len(instructions) * self.config.step_attempt_limit)
         progress = InstructionProgress(instructions)
         recorder = CheckpointRecorder(state.get("case_spec") or {}, step_id)

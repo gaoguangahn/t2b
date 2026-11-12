@@ -72,14 +72,16 @@ class PlanValidationTests(unittest.TestCase):
                           conditions=[{"id": "c1", "description": "可选"}])
         self.assertIn("missing_required_action", [i.code for i in validate_plan(plan, e).issues])
 
-    def test_explicit_swipe_count_cannot_silently_shrink(self):
-        e = evidence(("a", "b", "b"), actions=[
+    def test_original_count_description_and_actual_batches_remain_separate(self):
+        goal = "向上滑动5次，每次间隔2秒"
+        e = evidence(("a", "b", "b"), goal=goal, actions=[
             {"type": "swipe", "args": {"direction": "up", "times": 3}},
             {"type": "swipe", "args": {"direction": "up", "times": 2}}])
-        e.case.steps[0].instructions[0].parameters = {"times": 5}
-        plan = ScriptPlan(actions=[{"operation_id": "op0", "description": "滑动"}], omitted_segments=[
-            {"operation_ids": ["op1"], "reason": "误认为多余", "state_effects": "页面未变化", "observation_ids": ["o1", "o2"]}])
-        self.assertIn("parameter_coverage", [i.code for i in validate_plan(plan, e).issues])
+        context = e.compact()
+        instruction = context["case_spec"]["steps"][0]["instructions"][0]
+        self.assertEqual(instruction["text"], goal)
+        self.assertEqual(set(instruction), {"id", "text", "kind"})
+        self.assertEqual([op["action"]["args"]["times"] for op in context["operations"]], [3, 2])
 
     def test_known_failed_retry_can_be_removed_with_recovery_evidence(self):
         e = evidence(("a", "a", "b"))

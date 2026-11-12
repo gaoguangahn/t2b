@@ -52,7 +52,7 @@
 
 | 分支 | 程序行为 |
 | --- | --- |
-| 手机动作 | 检查方法与原值参数，先登记 pending 操作，再执行、归一化结果、等待并自动采集新页面 |
+| 手机动作 | 检查规定方法与工具参数合法性，先登记 pending 操作，再执行、归一化结果、等待并自动采集新页面 |
 | Observe | 检查预算，可短暂等待，新增 observation；不新增 operation |
 | CompleteInstruction | 报告当前指令完成，绑定 after 检查点，推进游标，绑定下一条 before 检查点 |
 | CompleteStep | 只有全部指令已报告完成才能成功结束；error 可直接返回错误结果 |
@@ -88,7 +88,7 @@ user：当前 observation ID + 当前截图
 
 第二条 user 内容按当前代码包含：
 
-- 当前块 id、单轮 goal、全部 instructions（JSON，含 kind 和 parameters）。
+- 当前块 id、单轮 goal、全部 instructions（JSON，包含 id/text/kind，不包含参数表；原值和次数完整保留在描述中）。
 - 最近六个前序 step 的 id、状态、summary。
 - 当前块已报告完成的指令 ID。
 - 当前活动指令 ID。
@@ -184,7 +184,7 @@ execution.status 统一为 pending/succeeded/failed/unknown。success 只用于�
 
 | 输入信息 | 用途 |
 | --- | --- |
-| CaseSpec.steps / instructions | 还原用户顺序、目标、原值参数及操作归属 |
+| CaseSpec.steps / instructions | 还原用户顺序、目标、描述中的原值要求及操作归属 |
 | step.repeat | 将整块有效动作和循环内验证一起重复 |
 | CaseSpec.verifications | 保留用户预期、anchor 与 scope |
 | operations 及执行结果 | 审查有效动作、错误路径、恢复路径；失败记录也保留作上下文 |

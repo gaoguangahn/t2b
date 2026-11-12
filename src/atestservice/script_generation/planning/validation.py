@@ -1,7 +1,6 @@
 """Validate references and conservative deletion boundaries; UI equality is not business equivalence."""
 from atestservice.contracts.script import GenerationIssue, ScriptPlan
 from atestservice.contracts.instructions import REQUIRED_ACTION_TYPES
-from math import isclose
 from atestservice.script_generation.evidence import Evidence
 
 
@@ -74,21 +73,4 @@ def validate_plan(plan: ScriptPlan, evidence: Evidence) -> ScriptPlan:
                                        and ops[a.operation_id].action.type == action_type and not a.condition_id
                                        for a in plan.actions):
                 plan.issues.append(GenerationIssue(code="missing_required_action", message=f"必要操作缺失或被改为可选：{instruction.text}", blocking=True, source_ids=[instruction.id]))
-            # Preserve explicit input literals when supplied by stage one.
-            expected_text = instruction.parameters.get("text")
-            if expected_text is not None and any(op.action.type == "input_text" for op in source_actions):
-                matching = [a for a in plan.actions if ops[a.operation_id] in retained and
-                            ops[a.operation_id].action.type == "input_text" and
-                            ops[a.operation_id].action.args.text == expected_text and not a.condition_id]
-                if not matching:
-                    plan.issues.append(GenerationIssue(code="input_coverage", message="用户指定的输入原值缺失或被改为条件执行。", blocking=True, source_ids=[instruction.id]))
-            for key, kind in (("times", "swipe"), ("duration", "wait")):
-                expected = instruction.parameters.get(key)
-                if not isinstance(expected, (int, float)) or not any(op.action.type == kind for op in source_actions):
-                    continue
-                matching = [ops[a.operation_id] for a in plan.actions if not a.condition_id
-                            and ops[a.operation_id] in retained and ops[a.operation_id].action.type == kind]
-                requested = sum((op.action.args.times or 1) if key == "times" else (op.action.args.duration or 0) for op in matching)
-                if not isclose(requested, expected):
-                    plan.issues.append(GenerationIssue(code="parameter_coverage", message=f"整理后 {key} 的请求总量与用户要求不一致。", blocking=True, source_ids=[instruction.id]))
     return plan

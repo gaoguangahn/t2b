@@ -2,17 +2,19 @@
 
 ## 原因与处理
 
-prepare 曾直接发送共享业务模型 CaseSpec。其默认字段不全部进入 required，Instruction.parameters 的开放字典也不符合严格结构化输出约束。SDK 的自动补齐行为不足以保证整份请求符合接口要求。
+prepare 曾直接发送共享业务模型 CaseSpec。其默认字段不全部进入 required，旧 Instruction.parameters 的开放字典也不符合严格结构化输出约束。SDK 的自动补齐行为不足以保证整份请求符合接口要求。后续按职责划分删除了第一阶段参数提取，不保留字典或参数条目表。
 
 当前职责分开：
 
 ```text
 用户描述 → CaseExtraction（模型协议）
-         → 参数列表转字典、业务引用校验、程序填写版本/修订号
-         → CaseSpec（原有阶段交接契约）
+         → 业务引用校验、程序填写版本/修订号
+         → CaseSpec（保留目标块、描述、类别、循环、验证锚点）
 ```
 
-case_preparation/models.py 定义 CaseExtraction。参数使用 `[{"name":"text","value":"a  b"}]`，没有参数时为 []。条目名重复时报错，字符串和数值不混淆。schema_version 与 source_revision 不由模型生成。确认稿和生成时的解析复用同一入口，HTTP/插件字段、CaseSpec 和 ExplorationResult 不变。
+case_preparation/models.py 定义 CaseExtraction。instruction 只包含 id/text/kind，不提取参数；用户指定的应用、输入原文、次数、时长等完整保留在描述。schema_version 与 source_revision 由程序填写。确认稿和生成时的解析复用同一入口，HTTP 和探索结果接口不变，CaseSpec 中移除了 instruction.parameters。旧快照若仍带该字段需重新整理用例，不静默丢掉其中的原值。
+
+第二阶段结合描述、当前页面与工具定义决定调用方式和参数，实际参数进入 operations[].action.args，第三阶段 IR 的动作 parameters 继续保留。实际调用账本不依赖第一阶段参数表。固定方法、工具参数类型、原轨迹引用与边界检查保留；输入原值及数量的语义核对由模型结合描述和记录完成，不声称程序已经从自然语言精确抽取并验证。
 
 ## 共用模型边界
 
@@ -60,7 +62,7 @@ ScriptIR 只是代码生成的输入数据，不作为模型的响应 Schema 发
 
 ## 验证
 
-85 个离线检查通过，未新增测试框架依赖。
+离线检查覆盖描述保留、没有参数表、实际动作参数记录和所有严格 Schema；未新增测试框架依赖。
 
 tests/test_llm_schema.py 通过真实 LangChain/OpenAI SDK 与 httpx.MockTransport 捕获最终请求。覆盖四类输出在 json_schema/function_calling 下的序列化、19 个工具、JSON mode、debug 调用、Schema 发送前拒绝、业务转换、错误返回与能力配置。
 

@@ -20,9 +20,6 @@ from test_workflow import Publisher
 
 def extraction(case):
     data = case.model_dump(mode="json", exclude={"schema_version", "source_revision"})
-    for step in data["steps"]:
-        for instruction in step["instructions"]:
-            instruction["parameters"] = [{"name": name, "value": value} for name, value in instruction["parameters"].items()]
     return CaseExtraction.model_validate(data)
 
 
@@ -40,6 +37,7 @@ class CasePreparationTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(schema, CaseExtraction)
         self.assertIn(json.dumps({"raw_text": source}, ensure_ascii=False), prompt)
         self.assertIn(source, draft.editable_text)
+        self.assertNotIn("明确参数：", draft.editable_text)
         self.assertEqual(result["case_spec"]["source_revision"], parser_revision(source))
         self.assertEqual(publisher.events[-1]["node"], "prepare_case")
         artifact = publisher.events[-1]["payload"]["blocks"][1]
