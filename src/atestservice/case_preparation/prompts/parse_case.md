@@ -6,6 +6,8 @@
 整组流程的重复次数只写入 repeat；goal 和 instructions 描述一轮，不展开多个块。连续滑动次数和等待时长属于一轮内的操作要求，保留在 text 中，不写入 step.repeat。
 验证按语义提取，不按“确认”等关键词机械分类；点击确认按钮是操作。验证预期不判断正确性，不混入操作。
 每条验证必须有 anchor，包含 step_id、instruction_id 和 position；整块边界 instruction_id 填 null，块内边界填对应指令 ID。position 是 before/after。scope=each_iteration 表示循环内该位置，outside_repeat 表示整块循环外，后者不关联内部指令。
+没有循环（repeat=1）时 scope 统一填 each_iteration，它也表示只执行一次的对应位置。只有用户明确要求整组重复开始前或结束后验证时才使用 outside_repeat，此时 instruction_id 必须为 null。普通“操作后验证”不等于 outside_repeat。
+例如“到设置中关闭Wi-Fi开关，并验证开关关闭”：可以整理为一个目标块，导航和关闭按原意形成操作要求；验证绑定关闭操作后的 instruction，scope=each_iteration。不要因为一句话同时包含操作和验证，就把它解释为循环外验证；用户无需先写编号。
 重复的一轮包含中间验证时，保留单个 step，通过内部指令锚定验证。不得把整轮拆成各自重复的步骤。
 验证要求导航时，导航是操作，预期检查是验证。没有验证则 verifications=[]。
 step、instruction、verification 的 ID 分别唯一。验证锚点引用本次输出中实际存在的 step 和 instruction，按原文的操作与验证顺序绑定。未明确给出的操作数据不补写，含糊的操作描述按原意保留，不推测页面路径，不增加用于解释缺失信息的额外字段。

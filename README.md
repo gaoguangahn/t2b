@@ -101,7 +101,7 @@ CaseSpec 包含 steps 与 verifications。step 保留 goal、repeat 和有序 in
 - 模型使用状态式上下文：单轮任务、明确指令、完成游标、近期动作和最近结果、当前截图，不回灌 assistant/tool 历史。
 - Observe 是额外采集控制；默认动作后自动观察，额外观察不生成 operation，连续观察与等待有预算。
 - Instruction.kind 表达语义类别，exploration/policy.py 在下发前约束规定方法；强制方法未成功执行不能报告完成。探索模型依据完整描述填写实际参数，工具类型校验和调用账本继续保留，不依赖预提取参数表。
-- 可通过 complete_current_instruction 在下一动作或 CompleteStep 中报告前一指令完成，仍兼容独立 CompleteInstruction。检查点先绑定当前页面，再推进下一条。
+- 手机动作可用 complete_current_instruction=true 表示当前指令在动作前已完成，本动作属于紧邻的下一条；先校验下一条存在、当前规定方法已完成和下一动作合法，再保存边界并推进。当前指令仍需操作时为false，最后一条动作不得为true，完成后用CompleteStep结束。可单独使用CompleteInstruction，不增加独立模型复核调用。
 - 过期刷新在模型决策前进行，不再仅因推理耗时超过 30 秒持续拒绝动作。
 - progress.py 管理指令游标，checkpoints.py 绑定验证证据；轨迹使用 OperationRecord 并校验页面引用和顺序。
 - 第三阶段保留失败动作作上下文，形成可追溯的动作计划，可按需读取已有完整观察；删除后检查 UI 衔接、指令覆盖与验证边界。证据不足返回 blocked，UI 相同不证明业务状态等价。
@@ -127,7 +127,7 @@ CaseSpec 包含 steps 与 verifications。step 保留 goal、repeat 和有序 in
 
 ## 第三阶段当前实现
 
-二阶段输出结构不变，只细化 reason。第三阶段为动作计划、共用目标解析、类型化 IR 和框架编码。点击、验证和条件读取各自位置的观察；动态展示值不直接作为控件身份，验证预期不因现场结果改写。
+二阶段输出结构不变，只细化 reason。第三阶段为动作计划、共用目标解析、类型化 IR 和框架编码。点击通过区域重叠/邻近及语义选目标，再用稳定属性和所属区域消歧。验证在原锚点结合相关操作前后控件，选择状态属性、等价UI特征或文本/数量等方式；动态展示值不直接作为控件身份，验证预期不因现场结果改写。详见 [目标解析说明](docs/target_resolution_current.md)。
 
 Run 的 result 包含 status（ready/draft/blocked）、plan、可选 ir/script。script.filename/content/notes 保持可用，读取 IR 的插件需适配新结构。坐标限制和 TODO 输出 draft，路径证据不足输出 blocked 并保留问题；外层 Run 不误报完成。
 

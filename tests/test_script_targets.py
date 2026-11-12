@@ -45,7 +45,9 @@ class TargetTests(unittest.TestCase):
 
     def test_duplicate_text_combined_selector_and_position(self):
         elements = [element("点赞", resourceId="app:id/like"), element("点赞", resourceId="app:id/other", bounds=[300, 300, 400, 400])]
-        self.assertEqual(self.resolve(elements, pick()).status, "coordinate")
+        refined = self.resolve(elements, pick())
+        self.assertEqual(refined.status, "resolved")
+        self.assertEqual(refined.locator.selector.resource_id, "app:id/like")
         self.assertEqual(self.resolve(elements, pick(attributes=["text", "resource_id"])).status, "resolved")
         self.assertEqual(self.resolve(elements, pick(index=0), goal="点赞").status, "coordinate")
         self.assertEqual(self.resolve(elements, pick(index=0), goal="点击第一条的点赞").status, "resolved")
@@ -83,6 +85,86 @@ class TargetTests(unittest.TestCase):
     def test_overlapping_neighbor_that_does_not_cover_actual_click_is_rejected(self):
         result = self.resolve([element("搜索", bounds=[190, 190, 250, 250])], pick(), goal="打开搜索")
         self.assertEqual(result.status, "coordinate")
+
+    def test_meaningful_overlap_and_small_offset_do_not_require_center_hit(self):
+        for bounds in ([160, 110, 260, 190], [205, 115, 255, 185]):
+            with self.subTest(bounds=bounds):
+                result = self.resolve([element("搜索", bounds=bounds)], pick(), goal="打开搜索")
+                self.assertEqual(result.status, "resolved")
+        result = self.resolve([element("搜索", bounds=[0, 0, 1000, 1000])], pick(), goal="打开搜索")
+        self.assertEqual(result.status, "coordinate")
+
+    def test_identical_controls_are_not_resolved_by_nearest_index(self):
+        result = self.resolve([element("点赞", resourceId="app:id/like"),
+                               element("点赞", resourceId="app:id/like", bounds=[500, 500, 600, 600])], pick())
+        self.assertEqual(result.status, "coordinate")
+
+    def test_explicit_parent_identity_can_disambiguate_same_controls(self):
+        elements = [element("点赞", id="like1", parent_id="row1", resourceId="app:id/like"),
+                    element("点赞", id="like2", parent_id="row2", resourceId="app:id/like", bounds=[500, 500, 600, 600]),
+                    element("", id="row1", resourceId="app:id/first_card", bounds=[0, 0, 250, 250]),
+                    element("", id="row2", resourceId="app:id/other_card", bounds=[450, 450, 650, 650])]
+        result = self.resolve(elements, pick())
+        self.assertEqual(result.status, "resolved")
+        self.assertEqual(result.locator.within.resource_id, "app:id/first_card")
+
+    def test_state_text_is_not_automatically_added_to_action_identity(self):
+        result = self.resolve([element("开关", resourceId="app:id/switch", description="已开启"),
+                               element("开关", resourceId="app:id/switch", description="已关闭", bounds=[500, 500, 600, 600])],
+                              pick(attributes=["resource_id"]), goal="点击Wi-Fi开关")
+        self.assertEqual(result.status, "coordinate")
+
+    def test_refinement_does_not_bind_unrequested_display_content(self):
+        result = self.resolve([element("推荐商品甲", resourceId="app:id/item", description="用户甲"),
+                               element("推荐商品乙", resourceId="app:id/item", description="用户乙", bounds=[500, 500, 600, 600])],
+                              pick(attributes=["resource_id"]), goal="点击推荐商品")
+        self.assertEqual(result.status, "coordinate")
+
+    def test_switch_attribute_plan_does_not_rewrite_expected_to_observed(self):
+        selection = pick(attributes=["resource_id"], verification={
+            "method": "attribute", "attribute": "checked", "operator": "equals", "expected_value": True,
+            "evidence_observation_ids": ["o0"], "basis": "该控件checked表达Wi-Fi开关状态，用户要求开启"})
+        result = self.resolve([element("Wi-Fi", resourceId="app:id/wifi", checked=False)], selection,
+                              goal="验证Wi-Fi开关已打开", usage="verification")
+        self.assertEqual(result.status, "resolved")
+        self.assertIs(result.verification.expected_value, True)
+        self.assertEqual(result.verification.method, "attribute")
+
+    def test_explicit_ui_state_feature_works_without_checked(self):
+        selection = pick(attribute_role="state_indicator", verification={
+            "method": "ui_feature", "operator": "exists", "evidence_observation_ids": ["o0"],
+            "basis": "WLAN已关闭是页面明确状态提示，直接表达原预期"})
+        result = self.resolve([element("WLAN已关闭")], selection, goal="验证Wi-Fi关闭", usage="verification")
+        self.assertEqual(result.status, "resolved")
+        self.assertEqual(result.verification.method, "ui_feature")
+        # Merely seeing the switch control does not prove its state.
+        selection.attributes = ["resource_id"]
+        result = self.resolve([element("", resourceId="app:id/wifi")], selection,
+                              goal="验证Wi-Fi关闭", usage="verification")
+        self.assertEqual(result.status, "unresolved")
+
+    def test_count_preserves_collection_instead_of_forcing_unique_selector(self):
+        selection = pick(attributes=["resource_id"], verification={
+            "method": "count", "operator": "equals", "expected_value": 2,
+            "evidence_observation_ids": ["o0"], "basis": "用户要求两个同类条目，读取匹配集合数量"})
+        result = self.resolve([element("甲", resourceId="app:id/item"),
+                               element("乙", resourceId="app:id/item", bounds=[500, 500, 600, 600])], selection,
+                              goal="验证列表有2个条目", usage="verification")
+        self.assertEqual(result.status, "resolved")
+        self.assertIsNone(result.locator.selector.text)
+        self.assertIsNone(result.locator.index)
+
+    def test_invalid_or_invented_verification_evidence_is_reported_as_unresolved(self):
+        for value in (
+            {"method": "attribute", "attribute": "checked", "operator": "equals", "expected_value": "true",
+             "evidence_observation_ids": ["o0"], "basis": "错误值类型"},
+            {"method": "attribute", "attribute": "checked", "operator": "equals", "expected_value": True,
+             "evidence_observation_ids": ["invented"], "basis": "虚构来源"},
+        ):
+            with self.subTest(value=value):
+                result = self.resolve([element("Wi-Fi", resourceId="app:id/wifi", checked=True)],
+                    pick(attributes=["resource_id"], verification=value), goal="验证Wi-Fi开启", usage="verification")
+                self.assertEqual(result.status, "unresolved")
 
     def test_amount_verification_resolves_field_identity_not_observed_expected_value(self):
         result = self.resolve([element("99元", resourceId="app:id/amount")],

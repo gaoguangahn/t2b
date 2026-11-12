@@ -43,7 +43,7 @@ class ExploreControlTests(unittest.IsolatedAsyncioTestCase):
     async def test_consecutive_observe_is_not_an_operation(self):
         node, llm = make_node([
             ("Observe", {}), ("Observe", {}), ("Click", {"bounds": [10, 10, 100, 100]}),
-            ("CompleteStep", {"summary": "done", "complete_current_instruction": True}),
+            ("CompleteStep", {"summary": "done"}),
         ])
         case = CaseSpec(case_name="observe", steps=[{"id": "s1", "goal": "click"}])
         state = await node({"case_spec": case.model_dump(mode="json")})
@@ -60,9 +60,9 @@ class ExploreControlTests(unittest.IsolatedAsyncioTestCase):
     async def test_launch_cannot_be_replaced_or_skipped(self):
         node, llm = make_node([
             ("Click", {"bounds": [10, 10, 100, 100]}),
-            ("CompleteStep", {"summary": "skip", "complete_current_instruction": True}),
+            ("CompleteStep", {"summary": "skip"}),
             ("StartApp", {"app_name": "应用 A"}),
-            ("CompleteStep", {"summary": "done", "complete_current_instruction": True}),
+            ("CompleteStep", {"summary": "done"}),
         ])
         case = CaseSpec(case_name="launch", steps=[{"id": "s1", "goal": "启动应用 A", "instructions": [
             {"id": "i1", "text": "启动应用 A", "kind": "app_launch"},
@@ -75,11 +75,12 @@ class ExploreControlTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("启动应用 A", str(llm.requests[0]))
         self.assertIn("start_app", str(llm.requests[1]))
 
-    async def test_progress_can_advance_with_next_action(self):
+    async def test_progress_advances_only_with_explicit_completion(self):
         node, _ = make_node([
             ("Click", {"bounds": [10, 10, 100, 100]}),
-            ("Back", {"complete_current_instruction": True}),
-            ("CompleteStep", {"summary": "done", "complete_current_instruction": True}),
+            ("CompleteInstruction", {"summary": "已进入目标页面"}),
+            ("Back", {}),
+            ("CompleteStep", {"summary": "done"}),
         ])
         case = CaseSpec(case_name="progress", steps=[{"id": "s1", "goal": "open and return", "instructions": [
             {"id": "i1", "text": "open"}, {"id": "i2", "text": "return"},

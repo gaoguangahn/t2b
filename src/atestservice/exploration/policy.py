@@ -48,3 +48,14 @@ def validate_action(instruction, action):
     required = rule.action if rule else None
     if required and action.action != required:
         raise ValueError(f"当前操作必须使用 {required}，不能以其他动作替代。")
+
+
+def validate_action_transition(current_instruction, next_instruction, action, operations):
+    """Validate both sides of a proposed transition before the caller changes state."""
+    if next_instruction is None:
+        raise ValueError(
+            "当前已是最后一条指令，没有下一条可执行。不要将动作后的预期当作完成；"
+            "仍需操作时将complete_current_instruction设为false，观察操作结果后用CompleteStep结束。"
+        )
+    validate_completion(current_instruction, operations)
+    validate_action(next_instruction, action)

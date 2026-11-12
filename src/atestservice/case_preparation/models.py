@@ -37,4 +37,11 @@ class CaseExtraction(_ExtractionModel):
     verifications: list[ExtractedVerification]
 
     def to_case_spec(self) -> CaseSpec:
-        return CaseSpec.model_validate(self.model_dump(mode="json"))
+        data = self.model_dump(mode="json")
+        repeats = {step.id: step.repeat for step in self.steps}
+        for verification in data["verifications"]:
+            if repeats.get(verification["anchor"]["step_id"]) == 1:
+                # One iteration has no inside/outside distinction. Keep the exact
+                # instruction boundary rather than moving it to the end of a step.
+                verification["scope"] = "each_iteration"
+        return CaseSpec.model_validate(data)

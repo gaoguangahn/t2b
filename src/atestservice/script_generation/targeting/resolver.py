@@ -5,13 +5,16 @@ from pathlib import Path
 from typing import Literal
 from atestservice.contracts.action import ClickBounds
 from atestservice.contracts.observation import DeviceObservation
-from atestservice.contracts.script import Locator, ScriptPlan, Selector, TargetResolution
+from atestservice.contracts.script import ScriptPlan, TargetResolution, VerificationPlan
 from atestservice.llm.types import LLMCallOptions, StructuredLLM
 from atestservice.script_generation.evidence import Evidence, evidence_message
 from atestservice.script_generation.targeting.models import TargetPick, TargetResponse
-from atestservice.script_generation.targeting.stability import requested_index, selector_problem
+from atestservice.script_generation.targeting.context import build_target_context
+from atestservice.script_generation.targeting.locators import resolve_locator, validate_anchor_locator
+from atestservice.script_generation.targeting.verification import validate_verification
 from atestservice.ui.coordinate import bounds_to_normalized_point
-from atestservice.ui.elements import normalize_elements, contains, matches, target_pixels
+from atestservice.ui.elements import target_pixels
+from atestservice.ui.spatial import spatial_relation
 
 CLICK_TYPES = {"click", "double_click", "long_click"}
 _PROMPT = Path(__file__).parents[1] / "prompts" / "targets.md"
@@ -56,16 +59,12 @@ def _fallback(request: TargetRequest, reason: str) -> TargetResolution:
                                 notes=[f"{request.id}：{reason} 使用本次坐标，布局变化时需要调整。"])
     return TargetResolution(description=request.description, status="unresolved", observation_id=request.observation_id,
                             rationale=reason,
+                            verification=VerificationPlan(method="unresolved", basis=reason) if request.usage == "verification" else None,
                             notes=[f"{request.id}：{reason} 保留原要求，需按框架能力补充。"])
 
 
-def _selector(element, keys):
-    if not keys or len(keys) != len(set(keys)) or any(not element.get(k) for k in keys):
-        raise ValueError("Selected attribute is unavailable in UI evidence")
-    return Selector(**{k: element[k] for k in keys})
-
-
-def resolve_pick(request: TargetRequest, pick: TargetPick, elements: list[dict], observation: DeviceObservation) -> TargetResolution:
+def resolve_pick(request: TargetRequest, pick: TargetPick, elements: list[dict], observation: DeviceObservation,
+                 *, frames: dict[str, list[dict]] | None = None, operation_ids: set[str] | None = None) -> TargetResolution:
     """Validate model choice against actual UI; never fall back to an arbitrary candidate."""
     if pick.kind == "non_ui":
         if request.usage != "verification":
@@ -73,76 +72,70 @@ def resolve_pick(request: TargetRequest, pick: TargetPick, elements: list[dict],
         return TargetResolution(description=pick.target_description, status="non_ui", observation_id=request.observation_id, rationale=pick.reason)
     if pick.kind == "unresolved":
         return _fallback(request, pick.reason)
-    by_id = {e["id"]: e for e in elements}
+    frames = frames or {observation.id: elements}
+    source_id = pick.candidate_observation_id or observation.id
+    if source_id != observation.id and (request.usage != "verification" or pick.verification is None):
+        return _fallback(request, "动作或条件不能换帧定位；历史验证定位需明确验证方式及证据来源。")
+    if source_id not in frames:
+        return _fallback(request, "控件来源不属于提供的当前位置证据。")
+    if request.usage != "verification" and (pick.verification is not None or pick.attribute_role == "state_indicator"):
+        return _fallback(request, "状态验证特征不能用作操作身份或执行条件。")
+    if pick.attribute_role == "state_indicator" and (pick.verification is None or pick.verification.method != "ui_feature"):
+        return _fallback(request, "状态指示文本必须用于有明确依据的UI特征验证。")
+    source_elements = frames[source_id]
+    by_id = {e["id"]: e for e in source_elements}
     element = by_id.get(pick.candidate_id)
     if not element:
         return _fallback(request, "选择的控件没有现场证据。")
     try:
-        selector = _selector(element, pick.attributes)
-        problem = selector_problem(selector, element, request.goal, pick.attribute_role)
-        if problem:
-            return _fallback(request, problem)
-        scope = None
-        scope_bounds = None
-        if pick.scope_candidate_id:
-            parent = by_id.get(pick.scope_candidate_id)
-            if not parent or parent == element or not contains(parent["bounds"], element["bounds"]):
-                return _fallback(request, "缺少目标所属区域的可靠证据。")
-            scope = _selector(parent, pick.scope_attributes)
-            problem = selector_problem(scope, parent, request.goal, "control_identity")
-            if problem:
-                return _fallback(request, problem)
-            parents = [e for e in elements if matches(e, scope)]
-            if pick.scope_index is not None:
-                if requested_index(request.goal) != pick.scope_index or pick.scope_index >= len(parents) or parents[pick.scope_index]["id"] != parent["id"]:
-                    return _fallback(request, "所属条目的序号缺少用户要求或与现场目标不一致。")
-            elif len(parents) != 1:
-                return _fallback(request, "目标所属区域不能唯一确定。")
-            scope_bounds = parent["bounds"]
-        elif pick.scope_index is not None or pick.scope_attributes:
-            return _fallback(request, "区域索引或属性缺少对应区域。")
-        matched = [e for e in elements if matches(e, selector) and (not scope or contains(scope_bounds, e["bounds"]))]
-        if pick.index is not None:
-            if requested_index(request.goal) != pick.index:
-                return _fallback(request, "用户未指定此位置，不能用索引消除歧义。")
-            if pick.index >= len(matched) or matched[pick.index]["id"] != element["id"]:
-                return _fallback(request, "位置定位与现场目标不一致。")
-        elif len(matched) != 1:
-            return _fallback(request, "定位存在多个匹配，需要限定所属区域或保留用户的位置语义。")
+        verification = validate_verification(pick, element, source_id, frames, operation_ids or set()) if request.usage == "verification" else None
+        collection = verification is not None and verification.method == "count"
+        locator = resolve_locator(pick, element, source_elements, request.goal, collection=collection)
+        if source_id != observation.id:
+            validate_anchor_locator(locator, elements, collection=collection)
+        if verification is not None and verification.method == "ui_feature" and not (
+            locator.selector.text or locator.selector.description
+        ):
+            return _fallback(request, "UI状态特征存在判断需包含实际状态文案或描述，不能只检查开关控件存在。")
         if request.usage == "action":
             expected = target_pixels(request.bounds, observation.screen_size)
-            center = [(expected[0] + expected[2]) / 2, (expected[1] + expected[3]) / 2] if expected else None
-            if not center or not contains(element["bounds"], center + center):
-                return _fallback(request, "控件没有覆盖实际操作点，不能仅凭矩形相交替换原操作。")
+            spatial = spatial_relation(expected, element["bounds"], observation.screen_size)
+            if spatial["relation"] not in {"point_hit", "overlap", "nearby"}:
+                return _fallback(request, "所选控件与原操作区域缺少足够重叠或邻近依据。")
+            rationale = pick.reason + f" 空间关系：{spatial['relation']}。"
+        else:
+            rationale = pick.reason
         return TargetResolution(description=pick.target_description, status="resolved", observation_id=request.observation_id,
-                                rationale=pick.reason,
-                                locator=Locator(selector=selector, within=scope, within_index=pick.scope_index, index=pick.index))
-    except (ValueError, TypeError):
-        return _fallback(request, "选择的定位属性不完整或缺少证据。")
+                                rationale=rationale, locator=locator, verification=verification)
+    except (ValueError, TypeError) as error:
+        return _fallback(request, str(error))
 
 
 async def resolve_targets(evidence: Evidence, plan: ScriptPlan, llm: StructuredLLM) -> dict[str, TargetResolution]:
     requests = requests_for_plan(evidence, plan)
     resolutions = {}
-    # Each request is bounded to its own observation; no final-page substitution.
+    retained_ids = {action.operation_id for action in plan.actions}
+    # Anchor is fixed; bounded supporting frames explain identity without moving it.
     for request in requests:
         observation = evidence.observations.get(request.observation_id)
         if observation is None:
             resolutions[request.id] = _fallback(request, "对应位置的观察不可用。")
             continue
-        elements = normalize_elements(observation.elements)
-        payload = {"request_id": request.id, "usage": request.usage, "user_goal": request.goal,
-                   "action_description": request.description, "observation_id": request.observation_id,
-                   "target_bounds_pixels": target_pixels(request.bounds, observation.screen_size), "elements": elements}
+        payload, frames = build_target_context(evidence, request, retained_operation_ids=retained_ids)
         messages = [{"role": "system", "content": _PROMPT.read_text(encoding="utf-8")},
                     {"role": "user", "content": json.dumps(payload, ensure_ascii=False)}]
-        # Only relevant frame is sent, and only to vision-capable models.
-        full = evidence_message(llm, evidence, [request.observation_id])
-        images = [c for c in full["content"] if c["type"] == "image_url"]
+        # Label every image; do not lose frame IDs when adding comparison evidence.
+        images = []
+        for identifier in list(frames)[:3]:
+            full = evidence_message(llm, evidence, [identifier])
+            shots = [block for block in full["content"] if block["type"] == "image_url"]
+            if shots:
+                images.extend([{"type": "text", "text": f"observation_id={identifier}; role={'anchor' if identifier == observation.id else 'support'}"}, *shots])
         if images:
             messages.append({"role": "user", "content": images})
         response = await llm.invoke_structured(messages, TargetResponse, options=_OPTIONS)
         if len(response.targets) != 1 or response.targets[0].request_id != request.id:
             raise ValueError(f"Target response must match request exactly: {request.id}")
-        resolutions[request.id] = resolve_pick(request, response.targets[0], elements, observation)
+        resolutions[request.id] = resolve_pick(request, response.targets[0], frames[observation.id], observation,
+                                               frames=frames, operation_ids=set(payload["runtime_baseline_operation_ids"]))
     return resolutions

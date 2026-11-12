@@ -86,7 +86,7 @@ class SemanticInstructionTests(unittest.IsolatedAsyncioTestCase):
     async def test_return_home_can_require_multiple_actions(self):
         node, llm = make_node([
             ("Back", {}), ("Back", {}), ("Click", {"bounds": [10, 10, 100, 100]}),
-            ("CompleteStep", {"summary": "已到应用首页", "complete_current_instruction": True}),
+            ("CompleteStep", {"summary": "已到应用首页"}),
         ])
         case = CaseSpec(case_name="返回首页", steps=[{"id": "s1", "goal": "返回应用首页"}])
         result = await node({"case_spec": case.model_dump(mode="json")})
@@ -100,7 +100,7 @@ class SemanticInstructionTests(unittest.IsolatedAsyncioTestCase):
     async def test_large_wait_context_retains_full_requested_duration(self):
         node, llm = make_node([
             ("Wait", {"duration": 10}), ("Wait", {"duration": 10}), ("Wait", {"duration": 10}),
-            ("CompleteStep", {"summary": "等待完成", "complete_current_instruction": True}),
+            ("CompleteStep", {"summary": "等待完成"}),
         ])
         case = CaseSpec(case_name="等待", steps=[{"id": "s1", "goal": "等待30秒"}])
         await node({"case_spec": case.model_dump(mode="json")})

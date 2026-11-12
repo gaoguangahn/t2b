@@ -21,7 +21,7 @@ class StepEventTests(unittest.IsolatedAsyncioTestCase):
         for number in (1, 2):
             calls.extend([
                 ("Click", {"bounds": [10, 10, 100, 100]}),
-                ("CompleteStep", {"summary": f"done {number}", "complete_current_instruction": True}),
+                ("CompleteStep", {"summary": f"done {number}"}),
             ])
         node, _ = make_node(calls)
         publisher = Publisher()
@@ -61,10 +61,13 @@ class StepEventTests(unittest.IsolatedAsyncioTestCase):
         node, _ = make_node([
             ("CompleteStep", {"summary": "premature"}),
             ("Click", {"bounds": [10, 10, 100, 100]}),
-            ("CompleteStep", {"summary": "done", "complete_current_instruction": True}),
+            ("CompleteInstruction", {"summary": "first done"}),
+            ("Click", {"bounds": [10, 10, 100, 100]}),
+            ("CompleteStep", {"summary": "done"}),
         ])
         publisher = Publisher()
-        await node({"case_spec": {"steps": [{"id": "s1", "goal": "click"}]}, "event_publisher": publisher})
+        await node({"case_spec": {"steps": [{"id": "s1", "goal": "click twice", "instructions": [
+            {"id": "i1", "text": "first click"}, {"id": "i2", "text": "second click"}]}]}, "event_publisher": publisher})
         rejected = [e for e in publisher.events if e["node"] == "step_finish_rejected"]
         self.assertEqual(len(rejected), 1)
         self.assertEqual(rejected[0]["payload"]["title"], "目标块结束请求未通过")

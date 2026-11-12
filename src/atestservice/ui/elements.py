@@ -1,16 +1,31 @@
 """UI field normalization and geometric queries, independent of generation policy."""
+from collections import Counter
 from atestservice.ui.coordinate import parse_bounds, to_pixel_bounds
 
 
 def normalize_elements(elements):
     result = []
+    source_ids = [str(raw.get("node_id", raw.get("id"))) for raw in elements]
+    counts = Counter(source_ids)
+    source_map = {identifier: f"e{index}" for index, identifier in enumerate(source_ids)
+                  if identifier != "None" and counts[identifier] == 1}
     for index, raw in enumerate(elements):
         result.append({"id": f"e{index}", "resource_id": raw.get("resource_id") or raw.get("resourceId") or raw.get("resource-id"),
-                       "text": raw.get("text"), "description": raw.get("desc") or raw.get("description") or raw.get("content-desc"),
+                       "text": raw.get("text"), "description": raw.get("desc") or raw.get("description") or raw.get("content-desc") or raw.get("contentDescription"),
                        "class_name": raw.get("class_name") or raw.get("className") or raw.get("class"),
-                       "bounds": parse_bounds(raw.get("bounds")), "clickable": raw.get("clickable"),
+                       "bounds": parse_bounds(raw.get("bounds")), "clickable": boolean_value(raw.get("clickable")),
+                       **{key: boolean_value(raw.get(key)) for key in ("checked", "checkable", "selected", "enabled")},
+                       "parent_id": source_map.get(str(raw.get("parent_id", raw.get("parentId")))),
                        "hint": raw.get("hint") or raw.get("hintText"), "placeholder": raw.get("placeholder")})
     return result
+
+
+def boolean_value(value):
+    if type(value) is bool:
+        return value
+    if isinstance(value, str) and value.lower() in {"true", "false"}:
+        return value.lower() == "true"
+    return None
 
 
 def contains(outer, inner):

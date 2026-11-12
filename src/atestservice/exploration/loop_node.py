@@ -26,7 +26,7 @@ from atestservice.exploration.trace import build_operation_entry
 from atestservice.exploration.observations import ObservationStore
 from atestservice.exploration.observations.media import screen_size_from_snapshot
 from atestservice.exploration._runtime import ExplorationInput, StepLoopUpdate
-from atestservice.exploration.policy import validate_action, validate_completion
+from atestservice.exploration.policy import validate_action, validate_action_transition, validate_completion
 from atestservice.exploration.progress import InstructionProgress
 from atestservice.contracts.execution import normalize_execution, execution_succeeded
 from atestservice.exploration.checkpoints import CheckpointRecorder
@@ -101,10 +101,10 @@ class ExploreAgentLoopNode:
             step_result["instruction_results"] = progress.snapshot()
             return _step_failed_update(trajectory=trajectory, step_result=step_result)
 
-        async def reject_finish(event: dict[str, Any], message: str) -> None:
+        async def reject_finish(event: dict[str, Any], message: str, *, title: str = "目标块结束请求未通过") -> None:
             await publisher.node_finished(
                 stage="exploration", node="step_finish_rejected",
-                payload={**event, "title": "目标块结束请求未通过",
+                payload={**event, "title": title,
                          "blocks": [{"type": "text", "text": message}, *event["blocks"][1:]]},
             )
 
@@ -124,10 +124,15 @@ class ExploreAgentLoopNode:
         capture(instructions[0]["id"], "before")
         for round_index in range(1, max_rounds + 1):
             active = instructions[progress.index] if progress.index < len(instructions) else None
+            next_instruction = instructions[progress.index + 1] if progress.index + 1 < len(instructions) else None
             current_step["active_instruction_id"] = active["id"] if active else None
             context.task_text = render_step_task_text(current_step=current_step, step_results=step_results)
             context.task_text += "\n已报告完成的要求 ID：" + json.dumps([i["id"] for i in instructions[:progress.index]])
             context.task_text += "\n当前要求 ID：" + (active["id"] if active else "全部已报告完成，请结束当前块。")
+            context.task_text += "\n紧邻的下一条要求：" + (
+                json.dumps(next_instruction, ensure_ascii=False) if next_instruction else
+                "无；动作的complete_current_instruction必须为false，完成后用CompleteStep结束。"
+            )
             context.task_text += "\n次数与时长账本（全块累计；requested_total 是请求量，不是实测完成量）：\n" + json.dumps(
                 parameter_action_ledger(trajectory, step_id), ensure_ascii=False)
             current_observation = observations[-1]
@@ -201,27 +206,13 @@ class ExploreAgentLoopNode:
                     stage="exploration", node="agent_decision", payload=decision_event,
                 )
 
-            if active is not None and (decision.kind == "instruction" or decision.raw_args.get("complete_current_instruction")):
+            if active is not None and decision.kind == "instruction":
                 try:
                     validate_completion(active, operations)
                 except ValueError as exc:
                     context.last_result = {"success": False, "message": str(exc)}
-                    if decision.kind == "finish":
-                        await reject_finish(decision_event, str(exc))
+                    await reject_finish(decision_event, str(exc), title="指令完成请求未通过")
                     continue
-
-            if decision.raw_args.get("complete_current_instruction") and decision.kind != "instruction":
-                if active is not None:
-                    capture(active["id"], "after")
-                    progress.complete()
-                    if progress.index < len(instructions):
-                        capture(instructions[progress.index]["id"], "before")
-                    active = instructions[progress.index] if progress.index < len(instructions) else None
-                    current_step["active_instruction_id"] = active["id"] if active else None
-                    if decision.kind != "finish" or active is not None:
-                        await publisher.node_finished(stage="exploration", node="instruction_completed",
-                            payload=json_event("指令完成", decision.reason, f"{step_id}_progress_{progress.index}.json",
-                                               {"step_id": step_id, "completed_count": progress.index, "checkpoints": checkpoints}))
 
             if decision.kind == "observe":
                 wait = decision.raw_args.get("wait_seconds", 0)
@@ -242,6 +233,9 @@ class ExploreAgentLoopNode:
                 continue
 
             if decision.kind == "instruction":
+                if active is None:
+                    context.record_result({"success": False, "message": "没有待完成指令，请调用CompleteStep结束目标块。"})
+                    continue
                 if active is not None:
                     capture(active["id"], "after")
                     progress.complete()
@@ -254,11 +248,22 @@ class ExploreAgentLoopNode:
                 context.record_result({"success": active is not None, "message": "指令已记录，继续下一条。" if active else "没有待完成指令。"})
                 continue
 
-            if decision.kind == "finish" and decision.status == "completed" and progress.index < len(instructions):
-                message = "仍有未报告完成的指令，请先完成当前指令并调用 CompleteInstruction。"
-                context.record_result({"success": False, "message": message})
-                await reject_finish(decision_event, message)
-                continue
+            if decision.kind == "finish" and decision.status == "completed":
+                remaining = len(instructions) - progress.index
+                if remaining > 1:
+                    message = "仍有多条未完成的指令，请先完成当前指令并调用 CompleteInstruction。"
+                    context.record_result({"success": False, "message": message})
+                    await reject_finish(decision_event, message)
+                    continue
+                if active is not None:
+                    try:
+                        validate_completion(active, operations)
+                    except ValueError as exc:
+                        context.record_result({"success": False, "message": str(exc)})
+                        await reject_finish(decision_event, str(exc))
+                        continue
+                    capture(active["id"], "after")
+                    progress.complete()
 
             if decision.kind == "finish":
                 capture(None, "after")
@@ -303,13 +308,33 @@ class ExploreAgentLoopNode:
                 context.record_result({"success": False, "message": "全部指令已经完成，请结束当前块。"})
                 continue
             try:
-                validate_action(active, decision.action)
+                advance = decision.raw_args.get("complete_current_instruction", False)
+                if advance:
+                    validate_action_transition(active, next_instruction, decision.action, operations)
+                else:
+                    validate_action(active, decision.action)
             except ValueError as exc:
                 context.last_result = {"success": False, "message": str(exc)}
                 await publisher.node_finished(stage="exploration", node="action_rejected", payload=text_event("动作未下发", str(exc)))
                 continue
             consecutive_observes = 0
             self.executor.set_screen_size(screen_size_from_snapshot(current_observation))
+            if advance:
+                # All deterministic checks passed. Bind the old boundary before
+                # recording or dispatching the action for the next instruction.
+                completed_instruction_id = active["id"]
+                capture(completed_instruction_id, "after")
+                progress.complete()
+                active = instructions[progress.index]
+                current_step["active_instruction_id"] = active["id"]
+                capture(active["id"], "before")
+                await publisher.node_finished(
+                    stage="exploration", node="instruction_completed",
+                    payload=json_event("指令完成", f"已完成 {completed_instruction_id}，接下来执行 {active['id']}。",
+                        f"{step_id}_progress_{progress.index}.json",
+                        {"step_id": step_id, "completed_instruction_id": completed_instruction_id,
+                         "next_instruction_id": active["id"], "checkpoints": list(checkpoints)}),
+                )
             operation_index = len(operations)
             operation_entry = build_operation_entry(index=operation_index, decision=decision,
                 action=decision.action, execution={"success": False, "status": "pending"},

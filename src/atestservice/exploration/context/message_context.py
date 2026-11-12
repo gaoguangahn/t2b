@@ -10,6 +10,7 @@ from atestservice.exploration.observations.media import image_from_snapshot
 from atestservice.llm import StructuredLLM
 from atestservice.contracts.execution import ExecutionResult
 from atestservice.exploration.prompts import CURRENT_SCREEN_TEXT
+from atestservice.exploration.context.ui_state import render_ui_state
 
 
 class AgentLoopContext:
@@ -49,6 +50,7 @@ class AgentLoopContext:
         foreground = {key: observation[key] for key in ("package", "activity") if observation.get(key)}
         if foreground:
             page_text += "\n当前前台信息：" + json.dumps(foreground, ensure_ascii=False)
+        page_text += "\n当前控件状态证据：" + render_ui_state(observation)
         builder = llm.message_builder.text(page_text)
         builder.image(image_from_snapshot(observation))
         current_user_message = builder.build()[0]

@@ -37,8 +37,15 @@ RESPONSES = [
     (CaseExtraction, CASE),
     (PlanningResponse, {"plan": {"schema_version": "1.0", "actions": [], "conditions": [], "omitted_segments": [], "issues": []}, "observation_requests": []}),
     (TargetResponse, {"targets": [{"request_id": "op0", "kind": "unresolved", "target_description": "目标", "candidate_id": None,
+                                  "candidate_observation_id": None, "verification": None,
                                   "attributes": [], "scope_candidate_id": None, "scope_attributes": [], "scope_index": None,
                                   "index": None, "attribute_role": "control_identity", "reason": "缺少证据"}]}),
+    (TargetResponse, {"targets": [{"request_id": "verify:v1", "kind": "ui", "target_description": "Wi-Fi开关",
+                                  "candidate_id": "e0", "candidate_observation_id": "o1", "attributes": ["resource_id"],
+                                  "verification": {"method": "attribute", "attribute": "checked", "operator": "equals",
+                                                   "expected_value": False, "evidence_observation_ids": ["o0", "o1"],
+                                                   "baseline_operation_id": None, "basis": "checked表示开关状态，用户要求关闭"},
+                                  "reason": "操作前后同一开关的状态属性"}]}),
     (CodegenResult, {"language": "python", "framework": "dynamic_framework", "filename": "test_case.py", "content": "def test_case():\n    pass\n", "notes": []}),
 ]
 

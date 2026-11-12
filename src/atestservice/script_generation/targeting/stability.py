@@ -21,7 +21,7 @@ def selector_problem(selector: Selector, element, goal, role):
             return "定位依赖数量、价格或时间等动态展示值。"
         if key == "text" and not explicit and re.search(r"(?:打开|进入|点击).{0,6}搜索(?:框|栏|入口|页)?", goal) and "搜索" not in value:
             return "搜索入口不能绑定本次出现的推荐文本。"
-        if requested_index(goal) is not None and not explicit and key == "text":
+        if requested_index(goal) is not None and not explicit and key == "text" and role != "state_indicator":
             return "序号目标不能绑定本次列表条目的展示标题。"
     return None
 

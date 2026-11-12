@@ -70,6 +70,33 @@ class Locator(ScriptModel):
         return self
 
 
+class VerificationPlan(ScriptModel):
+    """Framework-independent predicate; expected values come from the user goal."""
+    method: Literal["attribute", "ui_feature", "text", "number", "count", "unresolved"]
+    attribute: Literal["checked", "selected", "enabled"] | None = None
+    operator: Literal["equals", "not_equals", "contains", "exists", "not_exists", "delta"] | None = None
+    expected_value: str | bool | float | None = None
+    baseline_operation_id: str | None = None
+    evidence_observation_ids: list[str] = Field(default_factory=list)
+    basis: str = Field(min_length=1)
+
+    def validate_method(self) -> None:
+        if self.method == "attribute":
+            valid = self.attribute is not None and self.operator in {"equals", "not_equals"} and type(self.expected_value) is bool
+        elif self.method == "ui_feature":
+            valid = self.attribute is None and self.operator in {"exists", "not_exists"} and self.expected_value is None
+        elif self.method == "text":
+            valid = self.attribute is None and self.operator in {"equals", "not_equals", "contains"} and isinstance(self.expected_value, str)
+        elif self.method in {"number", "count"}:
+            valid = self.attribute is None and self.operator in {"equals", "not_equals", "delta"} and type(self.expected_value) in {int, float}
+        else:
+            valid = self.attribute is None and self.operator is None and self.expected_value is None
+        if not valid:
+            raise ValueError("验证方式、比较操作或预期值类型不一致。")
+        if (self.operator == "delta") != (self.baseline_operation_id is not None):
+            raise ValueError("变化量验证必须引用运行时基准所在操作，其他验证不指定基准操作。")
+
+
 class TargetResolution(ScriptModel):
     description: str
     rationale: str = ""
@@ -78,6 +105,7 @@ class TargetResolution(ScriptModel):
     locator: Locator | None = None
     point: tuple[float, float] | None = None
     notes: list[str] = Field(default_factory=list)
+    verification: VerificationPlan | None = None
 
     @model_validator(mode="after")
     def consistent(self):
@@ -87,6 +115,10 @@ class TargetResolution(ScriptModel):
             raise ValueError("coordinate target requires a point")
         if self.point and any(not 0 <= v <= 1 for v in self.point):
             raise ValueError("point must use 0..1 coordinates")
+        if self.verification is not None:
+            self.verification.validate_method()
+            if self.status == "coordinate":
+                raise ValueError("Verification cannot use coordinate-only evidence")
         return self
 
 

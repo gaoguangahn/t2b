@@ -71,6 +71,38 @@ class IRTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(ir.steps[-1].expectation, "实付金额为100元")
         self.assertEqual(ir.steps[-1].target.locator.selector.resource_id, "app:id/amount")
 
+    async def test_state_strategy_reaches_codegen_once_at_original_loop_anchor(self):
+        e = evidence(elements=[element("Wi-Fi", resourceId="app:id/wifi", checked=False)], repeat=3, verifications=[
+            {"id": "v1", "goal": "验证Wi-Fi已开启", "anchor": {"step_id": "s1", "instruction_id": "i1"}}])
+        class StateLLM(GeneratorLLM):
+            async def invoke_structured(self, messages, schema, **kwargs):
+                if schema.__name__ == "TargetResponse":
+                    request = json.loads(messages[1]["content"])
+                    if request["usage"] == "verification":
+                        return schema(targets=[{"request_id": request["request_id"], "kind": "ui",
+                            "target_description": "Wi-Fi开关", "candidate_id": "e0", "attributes": ["resource_id"],
+                            "reason": "同一开关，用户要求开启，观察值不能改写预期", "verification": {
+                                "method": "attribute", "attribute": "checked", "operator": "equals", "expected_value": True,
+                                "evidence_observation_ids": ["o1"], "basis": "checked表达此开关状态，用户要求true"}}])
+                return await super().invoke_structured(messages, schema, **kwargs)
+        llm = StateLLM(e)
+        plan = ScriptPlan(actions=all_actions(e))
+        ir = build_script_ir(e, plan, await resolve_targets(e, plan, llm))
+        self.assertEqual(ir.steps[0].times, 3)
+        node = ir.steps[0].body[-1]
+        self.assertEqual(node.expectation, "验证Wi-Fi已开启")
+        self.assertEqual(node.anchor.instruction_id, "i1")
+        self.assertIs(node.target.verification.expected_value, True)
+        self.assertEqual(node.target.observation_id, "o1")
+        self.assertEqual(ScriptIR.model_validate_json(ir.model_dump_json()), ir)
+        await generate_code(ir, llm=llm)
+        messages = next(messages for name, messages in llm.requests if name == "CodegenResult")
+        supplied = json.loads(messages[1]["content"])["ir"]["steps"][0]["body"][-1]
+        self.assertEqual(supplied["expectation"], node.expectation)
+        self.assertEqual(supplied["target"]["verification"]["method"], "attribute")
+        self.assertIs(supplied["target"]["verification"]["expected_value"], True)
+        self.assertNotIn("verification", {key: value for key, value in supplied.items() if key != "target"})
+
     async def test_parameter_literals_and_coordinate_math_are_deterministic(self):
         original = " 原文\n$price`\" "
         e = evidence(("a", "b", "c", "d", "e"), actions=[

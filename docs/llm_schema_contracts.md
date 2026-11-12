@@ -14,6 +14,8 @@ prepare 曾直接发送共享业务模型 CaseSpec。其默认字段不全部进
 
 case_preparation/models.py 定义 CaseExtraction。instruction 只包含 id/text/kind，不提取参数；用户指定的应用、输入原文、次数、时长等完整保留在描述。schema_version 与 source_revision 由程序填写。确认稿和生成时的解析复用同一入口，HTTP 和探索结果接口不变，CaseSpec 中移除了 instruction.parameters。旧快照若仍带该字段需重新整理用例，不静默丢掉其中的原值。
 
+无循环（repeat=1）的验证统一为 each_iteration，保留原 instruction_id 和 before/after 位置，避免将内部锚点移到整块末尾。repeat>1 时不自动改变验证 scope，跨字段矛盾继续交给 CaseSpec 检查。CaseParser 对 Pydantic 结构/业务校验错误和 JSON 解析错误最多纠正两次（共三次调用）；反馈原始描述、校验错误及可用的上一份结构，要求保留验证与原意。网络、接口拒绝等提供方错误不走这套结构纠正机制，失败继续向上报告。
+
 第二阶段结合描述、当前页面与工具定义决定调用方式和参数，实际参数进入 operations[].action.args，第三阶段 IR 的动作 parameters 继续保留。实际调用账本不依赖第一阶段参数表。固定方法、工具参数类型、原轨迹引用与边界检查保留；输入原值及数量的语义核对由模型结合描述和记录完成，不声称程序已经从自然语言精确抽取并验证。
 
 第三阶段曾出现 `PlanningResponse ... items: schema must have a type key`。本地捕获的 SDK 请求中，`ScriptPlan.actions.items` 只有 `$ref`，指向 `$defs.PlannedAction`；标准 JSON Schema 与 OpenAI Structured Outputs 允许这种表达，但部分兼容网关可能要求数组元素直接声明类型。当前在发送前展开所有本地引用，使该处直接包含 `type: object`、properties、required 和 additionalProperties。未修改 PlanningResponse 的业务字段或第三阶段流程。用户已在实际环境复测确认流程可跑通。
@@ -47,12 +49,14 @@ json_schema 和 json_mode 都在消息正文中明确要求输出 JSON，以满�
 | --- | --- | --- |
 | case_preparation/parser.py | 原 CaseSpec | 改为独立 CaseExtraction，去除开放字典与程序元数据 |
 | script_generation/planning/planner.py | PlanningResponse / ScriptPlan | 展开 actions 等嵌套引用，补齐 required、移除默认值 |
-| script_generation/targeting/resolver.py | TargetResponse / TargetPick | 同上，nullable 属性仍以 null 表达 |
+| script_generation/targeting/resolver.py | TargetResponse / TargetPick | 同上；新增候选来源帧、可空 VerificationPlan，预期值按字符串/布尔/数字/null 声明联合类型 |
 | script_generation/codegen.py | CodegenResult | 同上，输出后继续执行代码与文件名检查 |
 | exploration/loop_node.py | 19 个探索工具 | 统一转换工具参数，保留原工具名、参数与解码逻辑 |
 | llm/client.py | invoke_structured_debug | 与正常请求使用同一 Schema 路径 |
 
 ScriptIR 只是代码生成的输入数据，不作为模型的响应 Schema 发送；其中的步骤树和坐标元组无需为了接口限制修改。
+
+目标解析在同一次 TargetResponse 调用中输出定位与验证策略，没有独立复核调用。VerificationPlan 的字段类型经过严格 Schema 发送，方法/操作符/预期值的组合、实际 UI 属性与证据来源再由 targeting/verification.py 检查；不合法的策略成为 unresolved 并保留限制，不会通过读取现场值改写用户预期。离线 SDK 检查包含非空的嵌套状态验证策略和布尔 false，避免只验证 null 分支。
 
 ## 运行诊断
 
@@ -64,7 +68,7 @@ Schema 转换、发送前校验和异常传播继续生效，保留正常运行�
 
 离线检查覆盖描述保留、没有参数表、实际动作参数记录和所有严格 Schema；未新增测试框架依赖。
 
-tests/test_llm_schema.py 通过真实 LangChain/OpenAI SDK 与 httpx.MockTransport 捕获最终请求。覆盖四类输出在 json_schema/function_calling 下的序列化、19 个工具、JSON mode、debug 调用、Schema 发送前拒绝、业务转换、错误返回与能力配置。
+tests/test_llm_schema.py 通过真实 LangChain/OpenAI SDK 与 httpx.MockTransport 捕获最终请求。覆盖用例解析、动作计划、目标解析和代码输出在 json_schema/function_calling 下的序列化、19 个工具、JSON mode、debug 调用、Schema 发送前拒绝、业务转换、错误返回与能力配置。手机动作包含类型明确的complete_current_instruction布尔字段，控制工具不包含该字段；严格Schema仍将动作的该字段列入required。探索不再调用独立完成复核模型，标记的执行前语义和游标推进合法性由提示词及本地策略共同约束。
 
 针对第三阶段报错，增加独立的网关限制检查：数组 items 缺少显式 type 时拒绝。原始 PlanningResponse Schema 能复现此错误；转换后的 SDK 请求通过该检查。另检查多处引用展开后互不影响、可空字段保留、未知和递归引用在本地报错。此前的离线校验接受标准 $ref，未覆盖这类网关限制。
 
