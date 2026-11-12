@@ -53,6 +53,7 @@ class LLMModelConfig:
     structured_output_method: StructuredOutputMethod = "json_schema"
     capabilities: LLMCapabilities = field(default_factory=LLMCapabilities)
     image_input_policy: ImageInputPolicy = "error"
+    debug_schema: bool = False
 
 
 class StructuredLLM(Protocol):

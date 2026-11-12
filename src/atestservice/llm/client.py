@@ -13,6 +13,24 @@ from atestservice.llm.models import DEFAULT_LLM_MODEL, get_llm_model_config
 from atestservice.llm.types import LLMCallOptions, LLMModelConfig, T
 
 
+def _print_request_schema(request: Any) -> None:
+    """Inspect the final SDK payload, without logging headers or input content."""
+    try:
+        payload = json.loads(request.content)
+        selected = {key: payload[key] for key in ("model", "response_format", "tools", "tool_choice") if key in payload}
+        text = payload.get("text")
+        if isinstance(text, dict) and "format" in text:
+            selected["text.format"] = text["format"]
+        print("[LLM Schema Debug] Actual outgoing schema:\n" + json.dumps(selected, ensure_ascii=False, indent=2), flush=True)
+    except Exception as error:
+        # Diagnostics must not break the model request or dump sensitive payloads.
+        print(f"[LLM Schema Debug] Unable to inspect schema: {type(error).__name__}", flush=True)
+
+
+async def _print_async_request_schema(request: Any) -> None:
+    _print_request_schema(request)
+
+
 class LangChainStructuredLLM:
     """把 LangChain ChatOpenAI 适配为图节点使用的 StructuredLLM 接口。"""
 
@@ -210,8 +228,15 @@ def create_llm(
         config.structured_output_method = structured_output_method  # type: ignore[assignment]
 
     # 显式关闭环境代理，保持和原本自部署模型调用行为一致。
-    http_client = httpx.Client(proxy=None, trust_env=False)
-    http_async_client = httpx.AsyncClient(proxy=None, trust_env=False)
+    http_client = httpx.Client(proxy=None, trust_env=False,
+                               event_hooks={"request": [_print_request_schema]} if config.debug_schema else None)
+    http_async_client = httpx.AsyncClient(proxy=None, trust_env=False,
+                                         event_hooks={"request": [_print_async_request_schema]} if config.debug_schema else None)
+
+    if config.debug_schema:
+        from importlib.metadata import version
+        versions = {name: version(name) for name in ("pydantic", "langchain-openai", "langchain-core", "openai")}
+        print("[LLM Schema Debug] Versions: " + json.dumps(versions), flush=True)
 
     print(
         f"Create LLM: name={model_name}, base_url={config.base_url}, "
