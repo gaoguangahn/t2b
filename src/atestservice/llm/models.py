@@ -46,7 +46,6 @@ def _models_from_config(cfg: configparser.ConfigParser) -> dict[str, LLMModelCon
                 supports_json_mode=section.getboolean("supports_json_mode", fallback=True),
             ),
             image_input_policy=cast(ImageInputPolicy, policy),
-            debug_schema=section.getboolean("debug_schema", fallback=False),
         )
     return models
 

@@ -14,24 +14,6 @@ from atestservice.llm.schema import strict_schema, strict_tool
 from atestservice.llm.types import LLMCallOptions, LLMModelConfig, T
 
 
-def _print_request_schema(request: Any) -> None:
-    """Inspect the final SDK payload, without logging headers or input content."""
-    try:
-        payload = json.loads(request.content)
-        selected = {key: payload[key] for key in ("model", "response_format", "tools", "tool_choice") if key in payload}
-        text = payload.get("text")
-        if isinstance(text, dict) and "format" in text:
-            selected["text.format"] = text["format"]
-        print("[LLM Schema Debug] Actual outgoing schema:\n" + json.dumps(selected, ensure_ascii=False, indent=2), flush=True)
-    except Exception as error:
-        # Diagnostics must not break the model request or dump sensitive payloads.
-        print(f"[LLM Schema Debug] Unable to inspect schema: {type(error).__name__}", flush=True)
-
-
-async def _print_async_request_schema(request: Any) -> None:
-    _print_request_schema(request)
-
-
 class LangChainStructuredLLM:
     """把 LangChain ChatOpenAI 适配为图节点使用的 StructuredLLM 接口。"""
 
@@ -139,14 +121,9 @@ class LangChainStructuredLLM:
                 f"LLM model {self.model_name!r} does not support tool calling."
             )
 
-        self._schema_debug(f"Preparing exploration tools: {[tool.__name__ for tool in tools]}")
         wire_tools = [strict_tool(tool) for tool in tools]
         model = self._chat_model(options).bind_tools(wire_tools, tool_choice="any", strict=True)
         return await model.ainvoke(self._normalize_prompt(prompt))
-
-    def _schema_debug(self, message: str) -> None:
-        if self.config.debug_schema:
-            print(f"[LLM Schema Debug] {message}", flush=True)
 
     def _structured_request(self, prompt, schema, options, *, include_raw):
         """Build and validate the wire contract before LangChain or the SDK touches it."""
@@ -155,11 +132,9 @@ class LangChainStructuredLLM:
                       "json_mode": "supports_json_mode"}.get(method)
         if capability is None:
             raise ValueError(f"Unsupported structured output method: {method}")
-        self._schema_debug(f"Preparing schema={schema.__name__}, method={method}")
         if not getattr(self.config.capabilities, capability):
             raise ValueError(f"LLM model {self.model_name!r} does not support {method}")
         wire_schema = strict_schema(schema)
-        self._schema_debug("Validated wire schema:\n" + json.dumps(wire_schema, ensure_ascii=False, indent=2))
         if method == "function_calling":
             wire = {"type": "function", "function": {
                 "name": schema.__name__, "description": wire_schema.get("description", schema.__name__),
@@ -172,8 +147,10 @@ class LangChainStructuredLLM:
             kwargs["strict"] = True
         model = self._chat_model(options).with_structured_output(wire, **kwargs)
         messages = self._normalize_prompt(prompt)
-        if method == "json_mode":
-            instruction = "Return one JSON object matching this schema; include every declared field:\n" + json.dumps(wire_schema, ensure_ascii=False)
+        if method in {"json_mode", "json_schema"}:
+            instruction = "Return one JSON object matching the supplied schema; include every declared field."
+            if method == "json_mode":
+                instruction += "\n" + json.dumps(wire_schema, ensure_ascii=False)
             if isinstance(messages, list):
                 messages = [{"role": "system", "content": instruction}, *messages]
             else:
@@ -254,19 +231,12 @@ def create_llm(
         config.structured_output_method = structured_output_method  # type: ignore[assignment]
 
     # 显式关闭环境代理，保持和原本自部署模型调用行为一致。
-    http_client = httpx.Client(proxy=None, trust_env=False,
-                               event_hooks={"request": [_print_request_schema]} if config.debug_schema else None)
-    http_async_client = httpx.AsyncClient(proxy=None, trust_env=False,
-                                         event_hooks={"request": [_print_async_request_schema]} if config.debug_schema else None)
-
-    if config.debug_schema:
-        from importlib.metadata import version
-        versions = {name: version(name) for name in ("pydantic", "langchain-openai", "langchain-core", "openai")}
-        print("[LLM Schema Debug] Versions: " + json.dumps(versions), flush=True)
+    http_client = httpx.Client(proxy=None, trust_env=False)
+    http_async_client = httpx.AsyncClient(proxy=None, trust_env=False)
 
     print(
         f"Create LLM: name={model_name}, base_url={config.base_url}, "
-        f"model={config.model}, method={config.structured_output_method}, debug_schema={config.debug_schema}"
+        f"model={config.model}, method={config.structured_output_method}"
     )
 
     chat_model = ChatOpenAI(

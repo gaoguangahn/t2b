@@ -6,7 +6,7 @@
 
 本轮第三阶段已完成：动作计划、共用目标解析、类型化 IR、生产/离线入口统一、旧实现清理与接口/事件配套；68 个离线测试、编译和模块导入检查通过。详细交付清单与真实联调限制见 script_generation_current.md。
 
-模型 Schema 兼容性收尾：prepare 的模型协议与 CaseSpec 分离，只保留描述结构，不提取参数；全部结构化输出/debug/探索工具使用显式严格 Schema 和发送前校验。旧参数表及其消费者已清理，实际调用参数和账本保留。检查包含真实 SDK 的最终 HTTP 请求捕获，不代表公司网关已验证。见 llm_schema_contracts.md。
+模型 Schema 兼容性收尾：prepare 的模型协议与 CaseSpec 分离，只保留描述结构，不提取参数；全部结构化输出/debug/探索工具使用显式严格 Schema 和发送前校验。旧参数表及其消费者已清理，实际调用参数和账本保留。离线检查包含真实 SDK 的最终 HTTP 请求捕获，用户另已在实际环境确认可跑通；临时 Schema 打印及配置项已移除。见 llm_schema_contracts.md。
 
 ## 当前状态
 

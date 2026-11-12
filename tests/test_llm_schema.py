@@ -17,7 +17,7 @@ from atestservice.case_preparation.parser import CaseParser
 from atestservice.contracts.case import CaseSpec
 from atestservice.contracts.script import CodegenResult
 from atestservice.exploration.tools.tool_definitions import EXPLORE_ACTION_TOOLS, tool_call_to_decision
-from atestservice.llm.client import LangChainStructuredLLM, _print_async_request_schema
+from atestservice.llm.client import LangChainStructuredLLM
 from atestservice.llm.schema import ModelSchemaError, strict_schema, strict_tool, validate_strict_schema
 from atestservice.llm.types import LLMCallOptions, LLMCapabilities, LLMModelConfig
 from atestservice.script_generation.planning.models import PlanningResponse
@@ -203,15 +203,14 @@ class TransportTests(unittest.IsolatedAsyncioTestCase):
         for client in self.clients:
             await client.aclose()
 
-    def llm(self, provider, method="json_schema", debug=False):
-        client = httpx.AsyncClient(transport=httpx.MockTransport(provider), trust_env=False,
-            event_hooks={"request": [_print_async_request_schema]} if debug else None)
+    def llm(self, provider, method="json_schema"):
+        client = httpx.AsyncClient(transport=httpx.MockTransport(provider), trust_env=False)
         self.clients.append(client)
         chat = ChatOpenAI(model="offline-fixture", api_key="PRIVATE_KEY", base_url="https://offline.invalid/v1",
                           http_async_client=client, max_retries=0, http_socket_options=())
         return LangChainStructuredLLM(chat, model_name="fixture", config=LLMModelConfig(
             base_url="https://offline.invalid/v1", model="offline-fixture", structured_output_method=method,
-            capabilities=LLMCapabilities(), debug_schema=debug))
+            capabilities=LLMCapabilities()))
 
     async def test_sdk_final_payloads_for_all_outputs_in_both_strict_modes(self):
         for method in ("json_schema", "function_calling"):
@@ -241,23 +240,25 @@ class TransportTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(decision.action.action, "click")
         self.assertEqual(len(provider.requests[0]["tools"]), len(EXPLORE_ACTION_TOOLS))
 
-    async def test_debug_output_uses_same_schema_and_excludes_messages_and_keys(self):
+    async def test_diagnostic_call_uses_same_schema_without_printing(self):
         provider = OfflineProvider(RESPONSES[-1][1])
         output = io.StringIO()
         with redirect_stdout(output):
-            result = await self.llm(provider, debug=True).invoke_structured_debug("PRIVATE_CASE_TEXT", CodegenResult)
+            result = await self.llm(provider).invoke_structured_debug("PRIVATE_CASE_TEXT", CodegenResult)
         self.assertIsInstance(result["parsed"], CodegenResult)
-        self.assertIn("Preparing schema=CodegenResult", output.getvalue())
-        self.assertIn("Actual outgoing schema", output.getvalue())
-        self.assertNotIn("PRIVATE_CASE_TEXT", output.getvalue())
-        self.assertNotIn("PRIVATE_KEY", output.getvalue())
+        expected = strict_schema(CodegenResult)
+        expected.pop("title", None)  # The SDK uses the root title as response_format.name.
+        self.assertEqual(provider.requests[0]["response_format"]["json_schema"]["schema"], expected)
+        self.assertIsNone(result["diagnostics"]["parsing_error"])
+        self.assertEqual(result["diagnostics"]["response_metadata"]["finish_reason"], "stop")
+        self.assertEqual(output.getvalue(), "")
 
-    async def test_invalid_schema_reports_before_http_even_with_debug_enabled(self):
+    async def test_invalid_schema_raises_before_http_without_printing(self):
         provider = OfflineProvider({})
         output = io.StringIO()
         with redirect_stdout(output), self.assertRaisesRegex(ModelSchemaError, "parameters"):
-            await self.llm(provider, debug=True).invoke_structured("private", OpenParameters)
-        self.assertIn("Preparing schema=OpenParameters", output.getvalue())
+            await self.llm(provider).invoke_structured("private", OpenParameters)
+        self.assertEqual(output.getvalue(), "")
         self.assertEqual(provider.requests, [])
 
     async def test_json_mode_carries_schema_instruction_and_validates_locally(self):
@@ -266,6 +267,26 @@ class TransportTests(unittest.IsolatedAsyncioTestCase):
         self.assertIsInstance(result, CodegenResult)
         self.assertIn("required", provider.requests[0]["messages"][0]["content"])
         self.assertEqual(provider.requests[0]["response_format"], {"type": "json_object"})
+
+    async def test_json_schema_messages_satisfy_qwen_json_keyword_requirement(self):
+        for prompt in ("整理用例", [{"role": "user", "content": "整理用例"}]):
+            with self.subTest(prompt_type=type(prompt).__name__):
+                provider = OfflineProvider(CASE)
+
+                def require_json_keyword(request):
+                    payload = json.loads(request.content)
+                    if not any("json" in str(message["content"]).lower() for message in payload["messages"]):
+                        return httpx.Response(400, json={"error": {
+                            "type": "invalid_request_error", "code": "Algo.InvalidParameter",
+                            "message": "'messages' must contain the word 'json' in some form"}})
+                    return provider(request)
+
+                result = await self.llm(require_json_keyword, "json_schema").invoke_structured(prompt, CaseExtraction)
+                self.assertIsInstance(result, CaseExtraction)
+                self.assertEqual(len(provider.requests), 1)
+                output = provider.requests[0]["response_format"]
+                self.assertEqual(output["type"], "json_schema")
+                self.assertTrue(output["json_schema"]["strict"])
 
     async def test_call_options_override_model_method_and_bad_output_is_not_accepted(self):
         provider = OfflineProvider({"language": "not-python"})

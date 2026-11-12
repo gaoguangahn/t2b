@@ -16,7 +16,7 @@ case_preparation/models.py 定义 CaseExtraction。instruction 只包含 id/text
 
 第二阶段结合描述、当前页面与工具定义决定调用方式和参数，实际参数进入 operations[].action.args，第三阶段 IR 的动作 parameters 继续保留。实际调用账本不依赖第一阶段参数表。固定方法、工具参数类型、原轨迹引用与边界检查保留；输入原值及数量的语义核对由模型结合描述和记录完成，不声称程序已经从自然语言精确抽取并验证。
 
-第三阶段曾出现 `PlanningResponse ... items: schema must have a type key`。本地捕获的 SDK 请求中，`ScriptPlan.actions.items` 只有 `$ref`，指向 `$defs.PlannedAction`；标准 JSON Schema 与 OpenAI Structured Outputs 允许这种表达，但部分兼容网关可能要求数组元素直接声明类型。当前在发送前展开所有本地引用，使该处直接包含 `type: object`、properties、required 和 additionalProperties。未修改 PlanningResponse 的业务字段或第三阶段流程。公司网关的具体行为仍需在公司环境复测确认。
+第三阶段曾出现 `PlanningResponse ... items: schema must have a type key`。本地捕获的 SDK 请求中，`ScriptPlan.actions.items` 只有 `$ref`，指向 `$defs.PlannedAction`；标准 JSON Schema 与 OpenAI Structured Outputs 允许这种表达，但部分兼容网关可能要求数组元素直接声明类型。当前在发送前展开所有本地引用，使该处直接包含 `type: object`、properties、required 和 additionalProperties。未修改 PlanningResponse 的业务字段或第三阶段流程。用户已在实际环境复测确认流程可跑通。
 
 ## 共用模型边界
 
@@ -39,6 +39,8 @@ llm/client.py 显式传入转换后的字典，不依赖 SDK 从 Pydantic 类隐
 - 探索工具：使用相同的严格参数 Schema；上层工具数量、参数与动作检查保持不变。
 - 普通和 debug 结构化调用共用请求构建方法。能力配置不支持该模式时发送前报错，不静默切换方式。
 
+json_schema 和 json_mode 都在消息正文中明确要求输出 JSON，以满足部分千问接口的关键词检查。json_schema 的结构仍通过 response_format 传递，正文不重复整份 Schema；json_mode 的正文包含完整 Schema。配置 json_schema 却收到 json_object 相关错误，可能涉及网关转换或下游接口校验，单凭错误不能确认实际是否仍有严格结构约束。本地不自动降级，返回结果继续由原 Pydantic 类型校验。
+
 ## 审查范围
 
 | 调用位置 | 模型输出 | 本轮结果 |
@@ -52,16 +54,11 @@ llm/client.py 显式传入转换后的字典，不依赖 SDK 从 Pydantic 类隐
 
 ScriptIR 只是代码生成的输入数据，不作为模型的响应 Schema 发送；其中的步骤树和坐标元组无需为了接口限制修改。
 
-## 排查日志
+## 运行诊断
 
-在 models.ini 的实际模型节设置 `debug_schema = true` 并重启。
+联调确认后已移除临时 Schema 打印、HTTP 请求打印 hook、依赖版本打印及 `debug_schema` 配置项。旧 models.ini 中若有该项，可直接删除；保留时也不会再读取。
 
-1. 创建模型时输出依赖版本；原有创建信息中包含 debug_schema 的实际值。
-2. 请求构造前输出 Preparing schema/method 或工具名；本地预校验失败也能看到入口。
-3. 预校验成功输出 Validated wire schema。
-4. HTTP hook 输出 SDK 最终发送的 response_format/tools/text.format。
-
-日志不包含消息正文、截图或请求头。查看服务端终端或 PM2 日志，插件事件不会自动包含 stdout。无 Preparing 时检查实际运行版本、INI 选择与服务重启；有 Preparing 但无 HTTP 日志时，结合本地错误定位发送前失败。
+Schema 转换、发送前校验和异常传播继续生效，保留正常运行日志。`invoke_structured_debug` 仍返回响应 metadata、解析错误等诊断数据，供调用方使用，本身不打印。
 
 ## 验证
 
@@ -71,6 +68,6 @@ tests/test_llm_schema.py 通过真实 LangChain/OpenAI SDK 与 httpx.MockTranspo
 
 针对第三阶段报错，增加独立的网关限制检查：数组 items 缺少显式 type 时拒绝。原始 PlanningResponse Schema 能复现此错误；转换后的 SDK 请求通过该检查。另检查多处引用展开后互不影响、可空字段保留、未知和递归引用在本地报错。此前的离线校验接受标准 $ref，未覆盖这类网关限制。
 
-这些检查验证最终发出的结构和程序行为；未调用公司模型网关或真实手机，不能替代公司环境的实际联调。若厂商额外限制某些标准约束，需要以完整错误和新日志定位，不能靠删除字段或静默降级掩盖。
+这些离线检查验证最终发出的结构和程序行为；不调用公司模型网关或真实手机。实际环境联调由用户完成。若厂商额外限制某些标准约束，需要结合完整错误定位，不能靠删除字段或静默降级掩盖。
 
 依据：[OpenAI Structured Outputs](https://developers.openai.com/api/docs/guides/structured-outputs)。
