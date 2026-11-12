@@ -45,22 +45,22 @@ class InputText(_ToolArgs):
 
 
 class DirectionSwipe(_ToolArgs):
-    """按方向滑动当前页面或可滚动区域，适合普通列表/页面滚动。若同一用户步骤明确包含滑动次数或间隔，应使用 times 和 interval 参数表达完整语义。"""
+    """按方向滑动当前页面或可滚动区域。固定次数、同方向且中间无需观察或验证时，一次调用完成整组滑动。例如“向上连续滑动3次，间隔1秒”使用 direction=up、times=3、interval=1，不拆为三次调用。寻找目标、遇到目标即停止或每次滑动后需判断时，逐次滑动并观察。"""
 
     direction: Literal["up", "down", "left", "right"] = Field(description="手指滑动方向。")
-    times: int | None = Field(default=None, ge=1, le=10, description="本次连续滑动次数。明确次数应填写；超过单次上限则结合账本分批，不截断总次数，也不重做已成功请求的批次。")
-    interval: float | None = Field(default=None, ge=0, description="多次滑动之间的间隔秒数。仅当同一用户步骤明确要求滑动间隔时填写。")
+    times: int | None = Field(default=None, ge=1, le=10, description="本次调用内连续执行的滑动次数，单次最多10次。固定次数且无需中间判断时，填写本指令尚需执行的次数，不逐次填1；超过10次才分批。按账本扣除同一指令、同一手势已成功请求的次数；不能再次填写原始总数导致重复。需逐次观察时填1；未指定次数时可填null，表示一次。")
+    interval: float | None = Field(default=None, ge=0, description="本次连续滑动之间的间隔，单位秒。例如“3次，每次间隔1秒”填写times=3、interval=1，不拆成滑动与Wait交替调用。用户未指定间隔时填null，不自行补值。")
 
 
 class CoordinateSwipe(_ToolArgs):
-    """按起止点滑动，适合明确需要从某个坐标滑到另一个坐标的场景。"""
+    """按起止点滑动，适合明确指定滑动区域的场景。同一手势需固定重复且中间无需观察或验证时，用times一次表达整组次数；每次手势使用相同起止点。寻找目标或需要逐次判断时，每次只滑一次；普通页面滚动优先DirectionSwipe。"""
 
     start_x: int = Field(ge=0, le=1000, description="起点 x，0-1000 归一化坐标。")
     start_y: int = Field(ge=0, le=1000, description="起点 y，0-1000 归一化坐标。")
     end_x: int = Field(ge=0, le=1000, description="终点 x，0-1000 归一化坐标。")
     end_y: int = Field(ge=0, le=1000, description="终点 y，0-1000 归一化坐标。")
-    times: int | None = Field(default=None, ge=1, le=10, description="连续滑动次数。仅当同一用户步骤明确要求滑动多次时填写；填写后表示本次工具调用连续完成这些滑动。")
-    interval: float | None = Field(default=None, ge=0, description="多次滑动之间的间隔秒数。仅当同一用户步骤明确要求滑动间隔时填写。")
+    times: int | None = Field(default=None, ge=1, le=10, description="本次调用内按相同起止点连续滑动的次数，单次最多10次。固定次数且无需中间判断时一次填写剩余次数，不拆成多次调用；例如同一手势重复3次填3。超过10次分批，扣除同一指令、同一手势已成功请求的次数；需逐次观察时填1，未指定次数时可填null。")
+    interval: float | None = Field(default=None, ge=0, description="本次连续滑动之间的间隔，单位秒。用户指定时与times一起填写，不拆成滑动与Wait交替调用；未指定间隔时填null。")
 
 
 class Drag(_ToolArgs):
