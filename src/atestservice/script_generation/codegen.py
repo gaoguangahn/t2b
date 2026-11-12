@@ -7,7 +7,7 @@ from atestservice.llm.types import LLMCallOptions, StructuredLLM
 from atestservice.script_generation.framework_profiles import load_profile
 
 _PROMPT = Path(__file__).parent / "prompts" / "codegen.md"
-_OPTIONS = LLMCallOptions(temperature=0.1, max_completion_tokens=12000, timeout=120, structured_output_method="function_calling")
+_OPTIONS = LLMCallOptions(temperature=0.1, max_completion_tokens=12000, timeout=120)
 
 
 async def generate_code(ir: ScriptIR, *, llm: StructuredLLM, profile_name: str | None = None) -> CodegenResult:

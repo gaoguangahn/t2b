@@ -25,6 +25,7 @@ verification.basis必须说明原预期与所选属性/特征的关系；UI替�
 候选默认来自锚点，candidate_observation_id=null。验证时可以从提供的历史支持帧选择已知对象/状态特征作为运行时定位参考，此时明确来源帧；这不代表该对象在锚点帧存在或验证已通过。例如期望出现的明确状态文案当前缺失，但历史帧有其属性，可以生成在原锚点等待出现的断言；不能把当前另一个相反状态文案当预期。动作和condition始终从锚点选，不允许换帧。没有锚点时不借用最终页面。
 
 ## 输出
-仅返回对应request_id的一个TargetPick。candidate_id和scope_candidate_id必须来自candidate_observation_id指定的同一帧（默认锚点）；attributes/scope_attributes只选实际存在的字段，程序复制值，不输出猜测selector。
+返回完整TargetResponse，顶层必须是对象，包含targets数组，数组内恰好一个与输入request_id一致的TargetPick，即{"targets": [{...}]}。使用函数调用时，这个完整对象就是TargetResponse函数的参数；不能只返回内部TargetPick、空对象{}或空参数。找不到可靠目标时仍返回该数组中的一项，kind="unresolved"并说明缺口，不能省略targets或返回空数组。其余字段按实际提供的Schema填写。
+candidate_id和scope_candidate_id必须来自candidate_observation_id指定的同一帧（默认锚点）；attributes/scope_attributes只选实际存在的字段，程序复制值，不输出猜测selector。
 kind=ui 需要候选与属性；kind=non_ui 仅用于明确不是 UI 目标的验证；无法可靠选择返回 unresolved，并说明缺口。
 attribute_role区分control_identity、user_value、state_indicator、dynamic_content；state_indicator仅用于上述UI特征验证，动态内容不能因为坐标吻合就作稳定操作定位。reason简述目标语义、位置/前后对应和稳定性依据。只选择一个最合适的目标，不因有多个候选就放弃，也不默认选第一个。不编造缺失ID，不编写框架代码。

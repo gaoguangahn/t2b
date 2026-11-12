@@ -17,6 +17,7 @@ from atestservice.exploration.context.rendering import (
     render_step_task_text,
 )
 from atestservice.exploration.context.facts import parameter_action_ledger
+from atestservice.exploration.context.swipe_feedback import last_swipe_feedback
 from atestservice.exploration.tools import (
     EXPLORE_ACTION_TOOLS,
     ActionExecutor,
@@ -151,6 +152,10 @@ class ExploreAgentLoopNode:
                 limit=6,
             )
             progress_summary = "当前目标块已执行动作：\n" + recent_actions
+            swipe_feedback = last_swipe_feedback(trajectory, step_id=step_id,
+                instruction_id=active["id"] if active else None, current_observation_id=current_observation["id"])
+            if swipe_feedback is not None:
+                progress_summary += "\n最近滑动前后UI参考：\n" + json.dumps(swipe_feedback, ensure_ascii=False)
             messages = context.build_messages(
                 llm=self.llm,
                 observation=current_observation,

@@ -50,15 +50,15 @@ class InputText(_ActionToolArgs):
 
 
 class DirectionSwipe(_ActionToolArgs):
-    """按方向滑动当前页面或可滚动区域。固定次数、同方向且中间无需观察或验证时，一次调用完成整组滑动。例如“向上连续滑动3次，间隔1秒”使用 direction=up、times=3、interval=1，不拆为三次调用。寻找目标、遇到目标即停止或每次滑动后需判断时，逐次滑动并观察。"""
+    """按手指方向滑动当前页面。查找下方/靠后的列表内容通常用up，查找上方/靠前内容通常用down，不能把浏览目标方向当成手指方向。固定次数且中间无需判断时用times合并；例如向上连续滑动3次、间隔1秒为direction=up、times=3、interval=1。寻找目标时times=1，根据实际页面变化重新决定方向或区域，不原样重复无进展的手势。"""
 
-    direction: Literal["up", "down", "left", "right"] = Field(description="手指滑动方向。")
+    direction: Literal["up", "down", "left", "right"] = Field(description="手指运动方向，不是想查看内容的位置。up=从下向上/y减小，普通列表通常露出更下方内容；down=从上向下/y增大，通常露出更上方内容；left=从右向左/x减小；right=从左向右/x增大。遵守用户明确的手势方向，查找场景结合实际页面反馈选择。")
     times: int | None = Field(default=None, ge=1, le=10, description="本次调用内连续执行的滑动次数，单次最多10次。固定次数且无需中间判断时，填写本指令尚需执行的次数，不逐次填1；超过10次才分批。按账本扣除同一指令、同一手势已成功请求的次数；不能再次填写原始总数导致重复。需逐次观察时填1；未指定次数时可填null，表示一次。")
     interval: float | None = Field(default=None, ge=0, description="本次连续滑动之间的间隔，单位秒。例如“3次，每次间隔1秒”填写times=3、interval=1，不拆成滑动与Wait交替调用。用户未指定间隔时填null，不自行补值。")
 
 
 class CoordinateSwipe(_ActionToolArgs):
-    """按起止点滑动，适合明确指定滑动区域的场景。同一手势需固定重复且中间无需观察或验证时，用times一次表达整组次数；每次手势使用相同起止点。寻找目标或需要逐次判断时，每次只滑一次；普通页面滚动优先DirectionSwipe。"""
+    """在实际可滚动区域内按手指起止点滑动。上滑end_y小于start_y，下滑相反；不要落到固定标题栏、底栏或另一个滚动面板。适合明确区域或默认滑动未作用于目标容器的场景。相同手势固定重复且中间无需判断时用times合并；查找时每次只滑一次并根据页面反馈调整。普通页面滚动优先DirectionSwipe，用户明确指定的起止区域保持原要求。"""
 
     start_x: int = Field(ge=0, le=1000, description="起点 x，0-1000 归一化坐标。")
     start_y: int = Field(ge=0, le=1000, description="起点 y，0-1000 归一化坐标。")

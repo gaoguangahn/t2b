@@ -3,15 +3,19 @@
 from __future__ import annotations
 
 import json
+import logging
 from typing import Any
 
 from langchain_openai import ChatOpenAI
-from pydantic import BaseModel, SecretStr
+from pydantic import BaseModel, SecretStr, ValidationError
 
+from atestservice.llm.diagnostics import response_summary
 from atestservice.llm.messages import MessageBuilder
 from atestservice.llm.models import DEFAULT_LLM_MODEL, get_llm_model_config
 from atestservice.llm.schema import strict_schema, strict_tool
 from atestservice.llm.types import LLMCallOptions, LLMModelConfig, T
+
+_LOGGER = logging.getLogger(__name__)
 
 
 class LangChainStructuredLLM:
@@ -37,11 +41,30 @@ class LangChainStructuredLLM:
     ) -> T:
         """调用结构化输出，并使用传入 schema 做最终校验。"""
 
-        model, messages = self._structured_request(prompt, schema, options, include_raw=False)
-        result = await model.ainvoke(messages)
-        if isinstance(result, schema):
-            return result
-        return schema.model_validate(result)
+        raw, parsed, error = await self._structured_response(prompt, schema, options)
+        if error is not None:
+            method = (options.structured_output_method if options else None) or self.config.structured_output_method
+            summary = {"schema": schema.__name__, "model": self.config.model, "method": method, **response_summary(raw)}
+            _LOGGER.warning("Structured output validation failed: %s", json.dumps(summary, ensure_ascii=False))
+            # Keep the original exception type so callers' correction policies still work.
+            error.add_note("LLM response metadata: " + json.dumps(summary, ensure_ascii=False))
+            raise error
+        return parsed
+
+    async def _structured_response(self, prompt, schema, options):
+        """Retain raw transport until validation finishes; no additional request."""
+        model, messages = self._structured_request(prompt, schema, options, include_raw=True)
+        response = await model.ainvoke(messages)
+        if isinstance(response, dict) and "raw" in response:
+            raw, parsed, error = response["raw"], response.get("parsed"), response.get("parsing_error")
+        else:
+            raw, parsed, error = None, response, None
+        if error is None:
+            try:
+                parsed = parsed if isinstance(parsed, schema) else schema.model_validate(parsed)
+            except ValidationError as validation_error:
+                parsed, error = None, validation_error
+        return raw, parsed, error
 
     async def invoke_structured_debug(
         self,
@@ -52,27 +75,7 @@ class LangChainStructuredLLM:
     ) -> dict[str, Any]:
         """调用结构化输出并保留原始消息 metadata，用于诊断截断/解析问题。"""
 
-        model, messages = self._structured_request(prompt, schema, options, include_raw=True)
-        result = await model.ainvoke(messages)
-        if not isinstance(result, dict):
-            parsed = (
-                result if isinstance(result, schema) else schema.model_validate(result)
-            )
-            return {
-                "parsed": parsed,
-                "diagnostics": {
-                    "response_metadata": {},
-                    "usage_metadata": {},
-                    "parsing_error": None,
-                    "raw_content_preview": "",
-                },
-            }
-
-        raw = result.get("raw")
-        parsed = result.get("parsed")
-        parsing_error = result.get("parsing_error")
-        if parsed is not None and not isinstance(parsed, schema):
-            parsed = schema.model_validate(parsed)
+        raw, parsed, parsing_error = await self._structured_response(prompt, schema, options)
 
         return {
             "parsed": parsed,
@@ -83,6 +86,7 @@ class LangChainStructuredLLM:
                 "usage_metadata": getattr(raw, "usage_metadata", {}) if raw else {},
                 "parsing_error": str(parsing_error) if parsing_error else None,
                 "raw_content_preview": str(getattr(raw, "content", "")) if raw else "",
+                "transport": response_summary(raw),
             },
         }
 

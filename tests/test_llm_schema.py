@@ -22,6 +22,8 @@ from atestservice.llm.schema import ModelSchemaError, strict_schema, strict_tool
 from atestservice.llm.types import LLMCallOptions, LLMCapabilities, LLMModelConfig
 from atestservice.script_generation.planning.models import PlanningResponse
 from atestservice.script_generation.targeting.models import TargetResponse
+from atestservice.script_generation.pipeline import generate_script
+from generation_fixtures import evidence, element, all_actions
 
 
 INSTRUCTION_TEXT = '输入原文「 a  b\n$test`" 」，向上滑动2次，每次间隔2.5秒'
@@ -302,6 +304,62 @@ class TransportTests(unittest.IsolatedAsyncioTestCase):
             await llm.invoke_structured("fixture", CodegenResult, options=LLMCallOptions(structured_output_method="function_calling"))
         self.assertIn("tools", provider.requests[0])
         self.assertNotIn("response_format", provider.requests[0])
+
+    async def test_third_stage_respects_ini_method_for_all_three_calls(self):
+        e = evidence(elements=[element(resourceId="app:id/search")])
+        values = {"PlanningResponse": {"plan": {"actions": all_actions(e)}, "observation_requests": []},
+                  "TargetResponse": {"targets": [{"request_id": "op0", "kind": "ui", "target_description": "搜索入口",
+                      "candidate_id": "e0", "attributes": ["resource_id"], "reason": "稳定入口且区域对应"}]},
+                  "CodegenResult": RESPONSES[-1][1]}
+        requests = []
+        def provider(request):
+            payload = json.loads(request.content)
+            self.assertNotIn("tools", payload)
+            self.assertEqual(payload["response_format"], {"type": "json_object"})
+            schema = json.loads(payload["messages"][0]["content"].split("\n", 1)[1])
+            requests.append(schema["title"])
+            return OfflineProvider(values[schema["title"]])(request)
+        result = await generate_script(e.case, e.exploration, llm=self.llm(provider, "json_mode"))
+        self.assertEqual(result.status, "ready")
+        self.assertEqual(requests, ["PlanningResponse", "TargetResponse", "CodegenResult"])
+
+    def empty_tool_provider(self, arguments, finish_reason="tool_calls"):
+        def provider(request):
+            return httpx.Response(200, json={"id": "chatcmpl-empty", "object": "chat.completion", "created": 0,
+                "model": "offline-fixture", "choices": [{"index": 0, "finish_reason": finish_reason,
+                    "message": {"role": "assistant", "content": "PRIVATE_OUTPUT", "tool_calls": [{
+                        "id": "call_empty", "type": "function", "function": {"name": "TargetResponse", "arguments": arguments}}]}}]})
+        return provider
+
+    async def test_empty_tool_arguments_reproduce_missing_targets_and_log_actual_transport(self):
+        for arguments, state, finish_reason in (("", "empty_object", "tool_calls"), ("{}", "empty_object", "tool_calls"),
+                                                ("", "empty_object", "length")):
+            with self.subTest(state=state, finish_reason=finish_reason):
+                llm = self.llm(self.empty_tool_provider(arguments, finish_reason), "function_calling")
+                with self.assertLogs("atestservice.llm.client", level="WARNING") as logged:
+                    with self.assertRaises(ValidationError) as raised:
+                        await llm.invoke_structured("PRIVATE_CASE_TEXT", TargetResponse)
+                self.assertEqual(raised.exception.errors()[0]["loc"], ("targets",))
+                self.assertEqual(raised.exception.errors()[0]["input"], {})
+                summary = " ".join(logged.output)
+                self.assertIn(state, summary)
+                self.assertIn('"arguments_source": "parsed"', summary)
+                self.assertIn(finish_reason, summary)
+                self.assertIn('"schema": "TargetResponse"', summary)
+                self.assertIn('"method": "function_calling"', summary)
+                self.assertNotIn("PRIVATE_CASE_TEXT", summary)
+                self.assertNotIn("PRIVATE_OUTPUT", summary)
+
+    async def test_debug_validation_failure_returns_metadata_instead_of_losing_it(self):
+        llm = self.llm(self.empty_tool_provider(""), "function_calling")
+        output = io.StringIO()
+        with redirect_stdout(output):
+            result = await llm.invoke_structured_debug("fixture", TargetResponse)
+        self.assertIsNone(result["parsed"])
+        self.assertIn("targets", result["diagnostics"]["parsing_error"])
+        self.assertEqual(result["diagnostics"]["transport"]["tool_calls"],
+                         [{"name": "TargetResponse", "arguments_state": "empty_object", "arguments_source": "parsed"}])
+        self.assertEqual(output.getvalue(), "")
 
     async def test_unsupported_capability_fails_before_http(self):
         provider = OfflineProvider({})

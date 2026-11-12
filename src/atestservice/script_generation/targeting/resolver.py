@@ -18,7 +18,7 @@ from atestservice.ui.spatial import spatial_relation
 
 CLICK_TYPES = {"click", "double_click", "long_click"}
 _PROMPT = Path(__file__).parents[1] / "prompts" / "targets.md"
-_OPTIONS = LLMCallOptions(temperature=0.1, max_completion_tokens=8192, timeout=120, structured_output_method="function_calling")
+_OPTIONS = LLMCallOptions(temperature=0.1, max_completion_tokens=8192, timeout=120)
 
 
 @dataclass

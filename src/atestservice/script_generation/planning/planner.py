@@ -8,7 +8,7 @@ from atestservice.script_generation.evidence import Evidence, evidence_message
 from atestservice.script_generation.planning.validation import validate_plan
 
 _PROMPT = Path(__file__).parents[1] / "prompts" / "plan.md"
-_OPTIONS = LLMCallOptions(temperature=0.1, max_completion_tokens=8192, timeout=120, structured_output_method="function_calling")
+_OPTIONS = LLMCallOptions(temperature=0.1, max_completion_tokens=8192, timeout=120)
 
 
 async def plan_actions(evidence: Evidence, llm) -> ScriptPlan:
