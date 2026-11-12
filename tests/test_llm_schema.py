@@ -6,6 +6,7 @@ import io
 import json
 import unittest
 from typing import Any
+from unittest.mock import patch
 
 import httpx
 from langchain_openai import ChatOpenAI
@@ -42,6 +43,18 @@ RESPONSES = [
 ]
 
 
+def require_explicit_item_types(node, path="$"):
+    """Emulate a gateway that does not resolve references at array items."""
+    if isinstance(node, dict):
+        if node.get("type") == "array" and "type" not in node.get("items", {}):
+            raise ValueError(f"{path}.items: schema must have a type key")
+        for key, value in node.items():
+            require_explicit_item_types(value, f"{path}.{key}")
+    elif isinstance(node, list):
+        for index, value in enumerate(node):
+            require_explicit_item_types(value, f"{path}[{index}]")
+
+
 class OfflineProvider:
     def __init__(self, response):
         self.response = response
@@ -53,6 +66,7 @@ class OfflineProvider:
         if payload.get("tools"):
             for tool in payload["tools"]:
                 assert tool["function"]["strict"] is True
+                require_explicit_item_types(tool["function"]["parameters"])
                 validate_strict_schema(tool["function"]["parameters"])
             message = {"role": "assistant", "content": None, "tool_calls": [{"id": "call_fixture", "type": "function", "function": {
                 "name": payload["tools"][0]["function"]["name"], "arguments": json.dumps(self.response)}}]}
@@ -61,6 +75,7 @@ class OfflineProvider:
             output = payload["response_format"]
             if output["type"] == "json_schema":
                 assert output["json_schema"]["strict"] is True
+                require_explicit_item_types(output["json_schema"]["schema"])
                 validate_strict_schema(output["json_schema"]["schema"])
             else:
                 assert output["type"] == "json_object"
@@ -91,13 +106,13 @@ class SchemaTests(unittest.TestCase):
         with self.assertRaisesRegex(ModelSchemaError, "required"):
             validate_strict_schema(wire)
         wire = strict_schema(CaseExtraction)
-        wire["$defs"]["ExtractedInstruction"]["additionalProperties"] = True
+        wire["properties"]["steps"]["items"]["properties"]["instructions"]["items"]["additionalProperties"] = True
         with self.assertRaisesRegex(ModelSchemaError, "additionalProperties"):
             validate_strict_schema(wire)
 
     def test_nullable_fields_required_and_defaults_removed_without_losing_null(self):
         wire = strict_schema(TargetResponse)
-        target = wire["$defs"]["TargetPick"]
+        target = wire["properties"]["targets"]["items"]
         self.assertEqual(set(target["required"]), set(target["properties"]))
         index = target["properties"]["index"]
         self.assertNotIn("default", index)
@@ -112,7 +127,8 @@ class SchemaTests(unittest.TestCase):
         self.assertEqual(case.verifications[0].goal, "验证不存在的提示")
         self.assertNotIn("source_revision", strict_schema(CaseExtraction)["properties"])
         broken = deepcopy(CASE)
-        self.assertNotIn("parameters", strict_schema(CaseExtraction)["$defs"]["ExtractedInstruction"]["properties"])
+        instruction = strict_schema(CaseExtraction)["properties"]["steps"]["items"]["properties"]["instructions"]["items"]
+        self.assertNotIn("parameters", instruction["properties"])
         broken["steps"][0]["instructions"][0]["parameters"] = {}
         with self.assertRaises(ValidationError):
             CaseExtraction.model_validate(broken)
@@ -139,6 +155,44 @@ class SchemaTests(unittest.TestCase):
             value: Any
         with self.assertRaisesRegex(ModelSchemaError, "untyped"):
             strict_schema(Untyped)
+
+    def test_planning_array_reference_reproduces_error_and_expands_to_object(self):
+        with self.assertRaisesRegex(ValueError, r"actions.items: schema must have a type key"):
+            require_explicit_item_types(PlanningResponse.model_json_schema())
+        wire = strict_schema(PlanningResponse)
+        require_explicit_item_types(wire)
+        self.assertNotIn("$defs", wire)
+        self.assertNotIn('"$ref"', json.dumps(wire))
+        plan = wire["properties"]["plan"]["anyOf"][0]
+        self.assertEqual(plan["type"], "object")
+        action = plan["properties"]["actions"]["items"]
+        self.assertEqual(action["type"], "object")
+        self.assertEqual(action["required"], ["operation_id", "description", "condition_id"])
+        self.assertFalse(action["additionalProperties"])
+        self.assertIn({"type": "null"}, action["properties"]["condition_id"]["anyOf"])
+
+    def test_repeated_reference_is_expanded_independently(self):
+        class Child(BaseModel):
+            value: str
+        class Pair(BaseModel):
+            first: Child
+            second: Child
+        wire = strict_schema(Pair)
+        wire["properties"]["first"]["properties"]["value"]["description"] = "first only"
+        self.assertNotIn("description", wire["properties"]["second"]["properties"]["value"])
+
+    def test_recursive_reference_fails_locally_instead_of_sending_a_truncated_schema(self):
+        class Node(BaseModel):
+            children: list["Node"]
+        with self.assertRaisesRegex(ModelSchemaError, "recursive"):
+            strict_schema(Node)
+
+    def test_unknown_reference_is_reported_before_http(self):
+        class MissingReference(BaseModel):
+            pass
+        broken = {"type": "object", "properties": {"child": {"$ref": "#/$defs/Unknown"}}}
+        with patch.object(MissingReference, "model_json_schema", return_value=broken), self.assertRaisesRegex(ModelSchemaError, "unknown schema reference"):
+            strict_schema(MissingReference)
 
 
 class TransportTests(unittest.IsolatedAsyncioTestCase):
