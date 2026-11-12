@@ -14,6 +14,8 @@ uv run atestservice
 
 排查结构化输出错误时，在实际使用的模型节添加 `debug_schema = true`，重启服务后查看控制台的 `[LLM Schema Debug]`。日志包含依赖版本及 SDK 最终发送的 `response_format`、工具 Schema 等，不包含请求头、用例消息或截图。默认关闭，排查结束后改回 `false`。
 
+模型输出在发送前统一生成并校验严格 Schema；prepare 使用独立的 CaseExtraction 协议，再转换为原有 CaseSpec，参数字典和插件接口不变。正常/debug 输出、三阶段模型调用和探索工具均经过相同的 Schema 边界，详见 [模型交互检查说明](docs/llm_schema_contracts.md)。
+
 ## 当前链路
 
 1. 整理用户输入为 CaseSpec，从同一结构渲染有序确认稿。

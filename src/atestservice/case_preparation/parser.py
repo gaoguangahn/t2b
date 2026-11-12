@@ -6,6 +6,7 @@ import json
 from pathlib import Path
 
 from atestservice.contracts.case import CaseSpec
+from atestservice.case_preparation.models import CaseExtraction
 from atestservice.llm import StructuredLLM, create_llm
 
 _PROMPT_PATH = Path(__file__).parent / "prompts" / "parse_case.md"
@@ -24,8 +25,8 @@ class CaseParser:
         )
         if self.llm is None:
             self.llm = create_llm()
-        parsed = await self.llm.invoke_structured(prompt, CaseSpec)
+        parsed = await self.llm.invoke_structured(prompt, CaseExtraction)
         # Also validate custom/injected model implementations at this boundary.
-        case = CaseSpec.model_validate(parsed.model_dump(mode="json"))
+        case = CaseExtraction.model_validate(parsed.model_dump(mode="json")).to_case_spec()
         case.source_revision = hashlib.sha256(raw_text.encode("utf-8")).hexdigest()
         return case

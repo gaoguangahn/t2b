@@ -1,15 +1,16 @@
 本次只处理一个完整用例。将描述整理为有序业务目标块和验证意图，按提供的 schema 返回，不拆分为多个用例。
 
 保留用户原意，不新增或删除业务操作、数据、验证；原样保留文本、应用名、次数、方向、时长、间隔。不确定的信息不能猜测。
-每个 step 表达一个业务目标或一轮完整流程。instructions 保留用户明确操作的顺序与参数，不猜坐标和控件入口。输入文本等明确参数放 parameters 并保留原字符。
+每个 step 表达一个业务目标或一轮完整流程。instructions 保留用户明确操作的顺序与参数，不猜坐标和控件入口。parameters 使用 name/value 条目列表，例如 [{"name":"text","value":"a  b"},{"name":"times","value":3}]；没有参数填 []。参数名不能重复，文本逐字符保留，次数/时长使用原始数值类型。后续程序会将条目转为业务字典。
 一条 instruction 也是语义要求，不等于一个手机动作。“返回应用首页”保留为一个要求，不推测要按几次返回；单一目标不人为拆成点击/输入/返回清单。仅为保留用户明确的多个环节或中间验证位置设置多个指令。
 整组流程的重复次数只写入 repeat；goal 和 instructions 描述一轮，不展开多个块。连续滑动次数和等待时长是轮内参数，不是 step.repeat。
 验证按语义提取，不按“确认”等关键词机械分类；点击确认按钮是操作。验证预期不判断正确性，不混入操作。
-每条验证必须有 anchor，指向明确 step_id，块内验证还需 instruction_id，position 是 before/after。scope=each_iteration 表示循环内该位置，outside_repeat 表示整块循环外，后者不关联内部指令。step_id 与 anchor.step_id 一致。
+每条验证必须有 anchor，包含 step_id、instruction_id 和 position；整块边界 instruction_id 填 null，块内边界填对应指令 ID。position 是 before/after。scope=each_iteration 表示循环内该位置，outside_repeat 表示整块循环外，后者不关联内部指令。
 重复的一轮包含中间验证时，保留单个 step，通过内部指令锚定验证。不得把整轮拆成各自重复的步骤。
 验证要求导航时，导航是操作，预期检查是验证。没有验证则 verifications=[]。
 step、instruction、verification 的 ID 分别唯一。验证位置或关键参数无法确定时，说明缺失并拒绝编造；不要输出无效引用。
 只负责整理描述，不操作手机，不生成脚本。没有操作则 steps=[]，不补操作。
+所有声明字段都要返回；空列表填 []，可空字段填 null，repeat 无重复时填 1。schema_version 和 source_revision 由程序填写，不在输出中生成。
 
 输入：
 {state_json}

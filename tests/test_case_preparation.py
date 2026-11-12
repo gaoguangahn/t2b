@@ -7,6 +7,7 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from atestservice.case_preparation.parser import CaseParser
+from atestservice.case_preparation.models import CaseExtraction
 from atestservice.case_preparation.service import CasePreparationService
 from atestservice.case_preparation.structure_case import StructureCaseNode
 from atestservice.config import ServerSettings
@@ -17,18 +18,26 @@ from atestservice.runs.service import RunService
 from test_workflow import Publisher
 
 
+def extraction(case):
+    data = case.model_dump(mode="json", exclude={"schema_version", "source_revision"})
+    for step in data["steps"]:
+        for instruction in step["instructions"]:
+            instruction["parameters"] = [{"name": name, "value": value} for name, value in instruction["parameters"].items()]
+    return CaseExtraction.model_validate(data)
+
+
 class CasePreparationTests(unittest.IsolatedAsyncioTestCase):
     async def test_service_and_node_share_parser(self):
         source = '输入 "a  b" + C++'
         case = CaseSpec(case_name="原值", steps=[{"id": "s1", "goal": source}])
-        model = SimpleNamespace(invoke_structured=AsyncMock(return_value=case))
+        model = SimpleNamespace(invoke_structured=AsyncMock(return_value=extraction(case)))
         parser = CaseParser(llm=model)
         publisher = Publisher()
         draft = await CasePreparationService(parser).prepare(source, event_publisher=publisher)
         result = await StructureCaseNode(parser=parser)({"request": {"raw_text": source}})
         self.assertEqual(model.invoke_structured.await_count, 2)
         prompt, schema = model.invoke_structured.call_args.args
-        self.assertEqual(schema, CaseSpec)
+        self.assertEqual(schema, CaseExtraction)
         self.assertIn(json.dumps({"raw_text": source}, ensure_ascii=False), prompt)
         self.assertIn(source, draft.editable_text)
         self.assertEqual(result["case_spec"]["source_revision"], parser_revision(source))
@@ -71,7 +80,7 @@ class PrepareApiTests(unittest.TestCase):
 
     def test_single_case_response_and_session_checks(self):
         case = CaseSpec(case_name="单个用例", steps=[{"id": "s1", "goal": "打开应用"}])
-        model = SimpleNamespace(invoke_structured=AsyncMock(return_value=case))
+        model = SimpleNamespace(invoke_structured=AsyncMock(return_value=extraction(case)))
         preparation = CasePreparationService(CaseParser(llm=model))
         with patch("atestservice.runs.service.prepare_case", side_effect=preparation.prepare):
             response = self.client.post("/api/v1/runs/prepare", json={"pluginSessionId": "ps1", "input": "打开应用"})

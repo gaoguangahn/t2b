@@ -10,12 +10,14 @@ REQUIRED_ACTION_TYPES: dict[str, ActionType] = {
     "system_home": "home", "multitask": "open_multitask",
 }
 
+InstructionKind = Literal["ui", "app_launch", "app_stop", "system_home", "multitask"]
+
 
 class Instruction(BaseModel):
     model_config = ConfigDict(extra="forbid")
     id: str = Field(min_length=1)
     text: str = Field(min_length=1)
-    kind: Literal["ui", "app_launch", "app_stop", "system_home", "multitask"] = Field(
+    kind: InstructionKind = Field(
         default="ui", description="语义类别。返回应用首页、返回上一页或关闭面板属于 ui；system_home 只指系统桌面，app_stop 只指明确停止应用。"
     )
     parameters: dict[str, str | int | float] = Field(default_factory=dict)

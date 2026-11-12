@@ -10,6 +10,7 @@ from pydantic import BaseModel, SecretStr
 
 from atestservice.llm.messages import MessageBuilder
 from atestservice.llm.models import DEFAULT_LLM_MODEL, get_llm_model_config
+from atestservice.llm.schema import strict_schema, strict_tool
 from atestservice.llm.types import LLMCallOptions, LLMModelConfig, T
 
 
@@ -54,12 +55,8 @@ class LangChainStructuredLLM:
     ) -> T:
         """调用结构化输出，并使用传入 schema 做最终校验。"""
 
-        method = options.structured_output_method if options else None
-        model = self._chat_model(options).with_structured_output(
-            schema,
-            method=method or self.config.structured_output_method,
-        )
-        result = await model.ainvoke(self._normalize_prompt(prompt))
+        model, messages = self._structured_request(prompt, schema, options, include_raw=False)
+        result = await model.ainvoke(messages)
         if isinstance(result, schema):
             return result
         return schema.model_validate(result)
@@ -73,13 +70,8 @@ class LangChainStructuredLLM:
     ) -> dict[str, Any]:
         """调用结构化输出并保留原始消息 metadata，用于诊断截断/解析问题。"""
 
-        method = options.structured_output_method if options else None
-        model = self._chat_model(options).with_structured_output(
-            schema,
-            method=method or self.config.structured_output_method,
-            include_raw=True,
-        )
-        result = await model.ainvoke(self._normalize_prompt(prompt))
+        model, messages = self._structured_request(prompt, schema, options, include_raw=True)
+        result = await model.ainvoke(messages)
         if not isinstance(result, dict):
             parsed = (
                 result if isinstance(result, schema) else schema.model_validate(result)
@@ -140,19 +132,53 @@ class LangChainStructuredLLM:
         *,
         options: LLMCallOptions | None = None,
     ) -> Any:
-        """调用 tool calling，并返回原始 AIMessage。
-
-        agent loop 需要把 assistant tool_call 消息放回标准上下文，因此这里不只
-        返回 name/args，而是保留 LangChain 返回的完整消息对象。
-        """
+        """调用一次探索工具；保留原始消息以便上层检查工具数量和参数。"""
 
         if not self.config.capabilities.supports_tool_calling:
             raise ValueError(
                 f"LLM model {self.model_name!r} does not support tool calling."
             )
 
-        model = self._chat_model(options).bind_tools(tools, tool_choice="any")
+        self._schema_debug(f"Preparing exploration tools: {[tool.__name__ for tool in tools]}")
+        wire_tools = [strict_tool(tool) for tool in tools]
+        model = self._chat_model(options).bind_tools(wire_tools, tool_choice="any", strict=True)
         return await model.ainvoke(self._normalize_prompt(prompt))
+
+    def _schema_debug(self, message: str) -> None:
+        if self.config.debug_schema:
+            print(f"[LLM Schema Debug] {message}", flush=True)
+
+    def _structured_request(self, prompt, schema, options, *, include_raw):
+        """Build and validate the wire contract before LangChain or the SDK touches it."""
+        method = (options.structured_output_method if options else None) or self.config.structured_output_method
+        capability = {"json_schema": "supports_json_schema", "function_calling": "supports_tool_calling",
+                      "json_mode": "supports_json_mode"}.get(method)
+        if capability is None:
+            raise ValueError(f"Unsupported structured output method: {method}")
+        self._schema_debug(f"Preparing schema={schema.__name__}, method={method}")
+        if not getattr(self.config.capabilities, capability):
+            raise ValueError(f"LLM model {self.model_name!r} does not support {method}")
+        wire_schema = strict_schema(schema)
+        self._schema_debug("Validated wire schema:\n" + json.dumps(wire_schema, ensure_ascii=False, indent=2))
+        if method == "function_calling":
+            wire = {"type": "function", "function": {
+                "name": schema.__name__, "description": wire_schema.get("description", schema.__name__),
+                "parameters": wire_schema, "strict": True,
+            }}
+        else:
+            wire = wire_schema
+        kwargs = {"method": method, "include_raw": include_raw}
+        if method != "json_mode":
+            kwargs["strict"] = True
+        model = self._chat_model(options).with_structured_output(wire, **kwargs)
+        messages = self._normalize_prompt(prompt)
+        if method == "json_mode":
+            instruction = "Return one JSON object matching this schema; include every declared field:\n" + json.dumps(wire_schema, ensure_ascii=False)
+            if isinstance(messages, list):
+                messages = [{"role": "system", "content": instruction}, *messages]
+            else:
+                messages = messages + "\n\n" + instruction
+        return model, messages
 
     @property
     def message_builder(self) -> MessageBuilder:
@@ -240,7 +266,7 @@ def create_llm(
 
     print(
         f"Create LLM: name={model_name}, base_url={config.base_url}, "
-        f"model={config.model}, method={config.structured_output_method}"
+        f"model={config.model}, method={config.structured_output_method}, debug_schema={config.debug_schema}"
     )
 
     chat_model = ChatOpenAI(
