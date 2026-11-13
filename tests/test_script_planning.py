@@ -65,13 +65,6 @@ class PlanValidationTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "contiguous"):
             validate_plan(ScriptPlan(actions=actions, conditions=[{"id": "c1", "description": "出现引导时"}]), e)
 
-    def test_required_launch_cannot_become_optional(self):
-        e = evidence(actions=[{"type": "start_app", "args": {"app_name": "示例"}}])
-        e.case.steps[0].instructions[0].kind = "app_launch"
-        plan = ScriptPlan(actions=[{"operation_id": "op0", "description": "启动", "condition_id": "c1"}],
-                          conditions=[{"id": "c1", "description": "可选"}])
-        self.assertIn("missing_required_action", [i.code for i in validate_plan(plan, e).issues])
-
     def test_original_count_description_and_actual_batches_remain_separate(self):
         goal = "向上滑动5次，每次间隔2秒"
         e = evidence(("a", "b", "b"), goal=goal, actions=[
@@ -80,7 +73,7 @@ class PlanValidationTests(unittest.TestCase):
         context = e.compact()
         instruction = context["case_spec"]["steps"][0]["instructions"][0]
         self.assertEqual(instruction["text"], goal)
-        self.assertEqual(set(instruction), {"id", "text", "kind"})
+        self.assertEqual(set(instruction), {"id", "text"})
         self.assertEqual([op["action"]["args"]["times"] for op in context["operations"]], [3, 2])
 
     def test_known_failed_retry_can_be_removed_with_recovery_evidence(self):

@@ -1,34 +1,24 @@
 import unittest
 
-from atestservice.contracts.action import ResolvedAction
 from atestservice.contracts.case import CaseSpec
 from atestservice.exploration.context.facts import parameter_action_ledger
 from atestservice.exploration.context.rendering import render_recent_step_actions
 from atestservice.exploration.context.message_context import AgentLoopContext
-from atestservice.exploration.policy import METHOD_REQUIREMENTS, validate_action
 from atestservice.exploration.prompts import SYSTEM_PROMPT
 from atestservice.exploration.tools import EXPLORE_ACTION_TOOLS
-from atestservice.exploration.tools.tool_definitions import tool_call_to_decision
 from atestservice.llm.messages import MessageBuilder
 from types import SimpleNamespace
 from test_exploration_controls import make_node
 
 
-class StablePathPolicyTests(unittest.TestCase):
-    def test_prompt_method_names_match_available_tools(self):
+class StablePathPromptTests(unittest.TestCase):
+    def test_method_guidance_matches_real_tools_without_instruction_categories(self):
         names = {tool.__name__ for tool in EXPLORE_ACTION_TOOLS}
-        for rule in METHOD_REQUIREMENTS.values():
-            self.assertIn(rule.tool, names)
-            self.assertIn(rule.tool, SYSTEM_PROMPT)
+        for name in ("StartApp", "StopApp", "Home", "OpenMultitask", "OpenControl", "OpenNotification"):
+            self.assertIn(name, names)
+            self.assertIn(name, SYSTEM_PROMPT)
         self.assertNotIn("{method_rules}", SYSTEM_PROMPT)
-
-    def test_method_policy_agrees_with_tool_decoder(self):
-        for rule in METHOD_REQUIREMENTS.values():
-            args = {"reason": "明确操作要求"}
-            if rule.tool == "StartApp":
-                args["app_name"] = "应用 A"
-            decision = tool_call_to_decision({"name": rule.tool, "args": args})
-            self.assertEqual(decision.action.action, rule.action)
+        self.assertNotIn("kind=", SYSTEM_PROMPT)
 
     def test_current_page_includes_foreground_facts_without_internal_artifacts(self):
         messages = AgentLoopContext(system_prompt="rules", task_text="task").build_messages(
@@ -39,17 +29,6 @@ class StablePathPolicyTests(unittest.TestCase):
         self.assertIn("example.app", text)
         self.assertIn("Main", text)
         self.assertNotIn("internal.jpg", text)
-
-    def test_application_home_cannot_use_system_home_or_stop(self):
-        instruction = {"id": "i1", "kind": "ui", "text": "返回应用首页"}
-        for action in ("home", "stop_app"):
-            with self.subTest(action=action), self.assertRaises(ValueError):
-                validate_action(instruction, ResolvedAction(action=action))
-        validate_action(instruction, ResolvedAction(action="back"))
-
-    def test_explicit_system_and_stop_actions_remain_available(self):
-        validate_action({"kind": "system_home"}, ResolvedAction(action="home"))
-        validate_action({"kind": "app_stop"}, ResolvedAction(action="stop_app"))
 
     def test_full_parameter_ledger_survives_recent_action_cutoff(self):
         operations = []

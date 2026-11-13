@@ -9,14 +9,16 @@ prepare 曾直接发送共享业务模型 CaseSpec。其默认字段不全部进
 ```text
 用户描述 → CaseExtraction（模型协议）
          → 业务引用校验、程序填写版本/修订号
-         → CaseSpec（保留目标块、描述、类别、循环、验证锚点）
+         → CaseSpec（保留目标块、描述、循环、验证锚点）
 ```
 
-case_preparation/models.py 定义 CaseExtraction。instruction 只包含 id/text/kind，不提取参数；用户指定的应用、输入原文、次数、时长等完整保留在描述。schema_version 与 source_revision 由程序填写。确认稿和生成时的解析复用同一入口，HTTP 和探索结果接口不变，CaseSpec 中移除了 instruction.parameters。旧快照若仍带该字段需重新整理用例，不静默丢掉其中的原值。
+case_preparation/models.py 定义 CaseExtraction。instruction 只包含 id/text，不提取参数；用户指定的应用、输入原文、次数、时长等完整保留在描述。schema_version 与 source_revision 由程序填写。确认稿和生成时的解析复用同一入口，HTTP 和探索结果接口不变，CaseSpec 中移除了 instruction.parameters。旧快照若仍带该字段需重新整理用例，不静默丢掉其中的原值。
+
+Instruction.kind已退役：新的CaseExtraction严格Schema只允许id/text，不接受模型继续输出kind。共享Instruction在读取旧用例或快照时只移除这一历史元数据字段，其余未知字段仍拒绝；序列化不再带kind。CaseSpec与bundle版本、确认稿和HTTP主流程保持不变。
 
 无循环（repeat=1）的验证统一为 each_iteration，保留原 instruction_id 和 before/after 位置，避免将内部锚点移到整块末尾。repeat>1 时不自动改变验证 scope，跨字段矛盾继续交给 CaseSpec 检查。CaseParser 对 Pydantic 结构/业务校验错误和 JSON 解析错误最多纠正两次（共三次调用）；反馈原始描述、校验错误及可用的上一份结构，要求保留验证与原意。网络、接口拒绝等提供方错误不走这套结构纠正机制，失败继续向上报告。
 
-第二阶段结合描述、当前页面与工具定义决定调用方式和参数，实际参数进入 operations[].action.args，第三阶段 IR 的动作 parameters 继续保留。实际调用账本不依赖第一阶段参数表。固定方法、工具参数类型、原轨迹引用与边界检查保留；输入原值及数量的语义核对由模型结合描述和记录完成，不声称程序已经从自然语言精确抽取并验证。
+第二阶段结合描述、当前页面与工具定义决定调用方式和参数，实际参数进入 operations[].action.args，第三阶段 IR 的动作 parameters 继续保留。实际调用账本不依赖第一阶段参数表。工具参数类型、原轨迹引用与边界检查保留；固定方法由探索提示词和工具说明指导，不再基于instruction类别强制拦截；输入原值及数量的语义核对由模型结合描述和记录完成，不声称程序已经从自然语言精确抽取并验证。
 
 第三阶段曾出现 `PlanningResponse ... items: schema must have a type key`。本地捕获的 SDK 请求中，`ScriptPlan.actions.items` 只有 `$ref`，指向 `$defs.PlannedAction`；标准 JSON Schema 与 OpenAI Structured Outputs 允许这种表达，但部分兼容网关可能要求数组元素直接声明类型。当前在发送前展开所有本地引用，使该处直接包含 `type: object`、properties、required 和 additionalProperties。未修改 PlanningResponse 的业务字段或第三阶段流程。用户已在实际环境复测确认流程可跑通。
 

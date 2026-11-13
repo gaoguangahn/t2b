@@ -57,23 +57,21 @@ class ExploreControlTests(unittest.IsolatedAsyncioTestCase):
         for messages in llm.requests:
             self.assertEqual([m["role"] for m in messages], ["system", "user", "user"])
 
-    async def test_launch_cannot_be_replaced_or_skipped(self):
+    async def test_unclassified_launch_instruction_can_use_start_app_and_cleanup(self):
         node, llm = make_node([
-            ("Click", {"bounds": [10, 10, 100, 100]}),
-            ("CompleteStep", {"summary": "skip"}),
             ("StartApp", {"app_name": "应用 A"}),
+            ("Click", {"bounds": [10, 10, 100, 100]}),
             ("CompleteStep", {"summary": "done"}),
         ])
         case = CaseSpec(case_name="launch", steps=[{"id": "s1", "goal": "启动应用 A", "instructions": [
-            {"id": "i1", "text": "启动应用 A", "kind": "app_launch"},
+            {"id": "i1", "text": "启动应用 A"},
         ]}])
         state = await node({"case_spec": case.model_dump(mode="json")})
         self.assertEqual(state["run"]["status"], "done")
-        self.assertEqual(node.step_loop.executor.execute.await_count, 1)
-        self.assertEqual(node.step_loop.executor.execute.call_args.args[0].action, "start_app")
+        self.assertEqual(node.step_loop.executor.execute.await_count, 2)
         self.assertEqual(state["trajectory"]["operations"][0]["action"]["args"]["app_name"], "应用 A")
         self.assertIn("启动应用 A", str(llm.requests[0]))
-        self.assertIn("start_app", str(llm.requests[1]))
+        self.assertNotIn('"kind"', llm.requests[0][1]["content"])
 
     async def test_progress_advances_only_with_explicit_completion(self):
         node, _ = make_node([

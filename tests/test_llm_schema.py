@@ -28,7 +28,7 @@ from generation_fixtures import evidence, element, all_actions
 
 INSTRUCTION_TEXT = '输入原文「 a  b\n$test`" 」，向上滑动2次，每次间隔2.5秒'
 CASE = {"case_name": "搜索", "case_goal": "搜索原文", "steps": [{"id": "s1", "goal": "搜索原文", "repeat": 3,
-        "instructions": [{"id": "i1", "text": INSTRUCTION_TEXT, "kind": "ui"}]}],
+        "instructions": [{"id": "i1", "text": INSTRUCTION_TEXT}]}],
         "verifications": [{"id": "v1", "goal": "验证不存在的提示", "anchor": {"step_id": "s1", "instruction_id": "i1", "position": "after"}, "scope": "each_iteration"}]}
 
 
@@ -132,11 +132,16 @@ class SchemaTests(unittest.TestCase):
         self.assertEqual(case.steps[0].repeat, 3)
         instruction = case.steps[0].instructions[0]
         self.assertEqual(instruction.text, INSTRUCTION_TEXT)
-        self.assertEqual(set(instruction.model_dump()), {"id", "text", "kind"})
+        self.assertEqual(set(instruction.model_dump()), {"id", "text"})
         self.assertEqual(case.verifications[0].goal, "验证不存在的提示")
         self.assertNotIn("source_revision", strict_schema(CaseExtraction)["properties"])
         broken = deepcopy(CASE)
         instruction = strict_schema(CaseExtraction)["properties"]["steps"]["items"]["properties"]["instructions"]["items"]
+        self.assertEqual(set(instruction["properties"]), {"id", "text"})
+        with_kind = deepcopy(CASE)
+        with_kind["steps"][0]["instructions"][0]["kind"] = "ui"
+        with self.assertRaises(ValidationError):
+            CaseExtraction.model_validate(with_kind)
         self.assertNotIn("parameters", instruction["properties"])
         broken["steps"][0]["instructions"][0]["parameters"] = {}
         with self.assertRaises(ValidationError):

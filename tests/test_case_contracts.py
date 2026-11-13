@@ -7,12 +7,21 @@ from atestservice.contracts.case import CaseSpec
 
 
 class CaseContractTests(unittest.TestCase):
+    def test_legacy_kind_is_discarded_without_relaxing_other_fields(self):
+        from atestservice.contracts.instructions import Instruction
+        original = {"id": "i1", "text": "启动浏览器并关闭弹窗", "kind": "app_launch"}
+        self.assertEqual(Instruction.model_validate(original).model_dump(), {"id": "i1", "text": original["text"]})
+        self.assertEqual(original["kind"], "app_launch")
+        self.assertNotIn("kind", Instruction.model_json_schema()["properties"])
+        with self.assertRaises(ValidationError):
+            Instruction.model_validate({**original, "unexpected": "still forbidden"})
+
     def test_instruction_contains_description_not_extracted_parameters(self):
         text = '输入原文「 a  b\n$test`" 」，向上滑动3次，每次间隔2秒'
         case = CaseSpec(case_name="literal", steps=[{"id": "s1", "goal": "输入后浏览", "repeat": 2,
-                        "instructions": [{"id": "i1", "text": text, "kind": "ui"}]}])
+                        "instructions": [{"id": "i1", "text": text}]}])
         instruction = case.model_dump()["steps"][0]["instructions"][0]
-        self.assertEqual(instruction, {"id": "i1", "text": text, "kind": "ui"})
+        self.assertEqual(instruction, {"id": "i1", "text": text})
         with self.assertRaises(ValidationError):
             CaseSpec(case_name="old", steps=[{"id": "s1", "goal": "输入", "instructions": [
                 {"id": "i1", "text": "输入", "parameters": {"text": "不再接受的参数表"}}]}])

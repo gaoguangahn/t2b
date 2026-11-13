@@ -11,6 +11,7 @@ from atestservice.exploration.loop_node import ExploreAgentLoopNode
 from atestservice.exploration._runtime import ExplorationInput, ExplorationUpdate
 from atestservice.device.client import DeviceClient
 from atestservice.runtime.event_payloads import json_event, text_event
+from atestservice.contracts.instructions import Instruction
 
 
 class CaseStepRunnerNode:
@@ -142,7 +143,8 @@ def _case_steps(case_spec: dict[str, Any]) -> list[dict[str, Any]]:
         goal = str(step.get("goal") or "").strip()
         if not step_id or not goal:
             continue
-        result.append({"id": step_id, "goal": goal, "instructions": step.get("instructions", [])})
+        instructions = [Instruction.model_validate(item).model_dump(mode="json") for item in step.get("instructions") or []]
+        result.append({"id": step_id, "goal": goal, "instructions": instructions})
     return result
 
 

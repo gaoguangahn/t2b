@@ -1,6 +1,5 @@
 """Validate references and conservative deletion boundaries; UI equality is not business equivalence."""
 from atestservice.contracts.script import GenerationIssue, ScriptPlan
-from atestservice.contracts.instructions import REQUIRED_ACTION_TYPES
 from atestservice.script_generation.evidence import Evidence
 
 
@@ -61,16 +60,11 @@ def validate_plan(plan: ScriptPlan, evidence: Evidence) -> ScriptPlan:
             if checkpoint.after_operation_id in segment.operation_ids and not same_ui(
                     evidence.observations.get(checkpoint.observation_id), evidence.observations.get(after_id)):
                 plan.issues.append(GenerationIssue(code="verification_boundary", message="验证检查点位于删除片段内部，不能自动挪动。", blocking=True, source_ids=[checkpoint.verification_id]))
-    # Explicit method requirements cannot silently disappear or become optional.
+    # Preserve instruction coverage without classifying its required methods.
     for step in evidence.case.steps:
         for instruction in step.instructions:
             source_actions = [op for op in ops.values() if op.semantic_ref.instruction_id == instruction.id]
             retained = [ops[a.operation_id] for a in plan.actions if ops[a.operation_id].semantic_ref.instruction_id == instruction.id]
             if source_actions and not retained:
                 plan.issues.append(GenerationIssue(code="instruction_coverage", message=f"指令的全部操作被删除，需要确认是否仍完成要求：{instruction.text}", blocking=True, source_ids=[instruction.id]))
-            action_type = REQUIRED_ACTION_TYPES.get(instruction.kind)
-            if action_type and not any(ops[a.operation_id].semantic_ref.instruction_id == instruction.id
-                                       and ops[a.operation_id].action.type == action_type and not a.condition_id
-                                       for a in plan.actions):
-                plan.issues.append(GenerationIssue(code="missing_required_action", message=f"必要操作缺失或被改为可选：{instruction.text}", blocking=True, source_ids=[instruction.id]))
     return plan

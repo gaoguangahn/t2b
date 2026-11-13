@@ -24,7 +24,6 @@ from atestservice.exploration.trace import build_operation_entry
 from atestservice.exploration.observations import ObservationStore
 from atestservice.exploration.observations.media import screen_size_from_snapshot
 from atestservice.exploration._runtime import ExplorationInput, StepLoopUpdate
-from atestservice.exploration.policy import validate_action, validate_action_transition, validate_completion
 from atestservice.exploration.progress import InstructionProgress
 from atestservice.contracts.execution import normalize_execution, execution_succeeded
 from atestservice.exploration.checkpoints import CheckpointRecorder
@@ -183,14 +182,6 @@ class ExploreAgentLoopNode:
                     stage="exploration", node="agent_decision", payload=decision_event,
                 )
 
-            if active is not None and decision.kind == "instruction":
-                try:
-                    validate_completion(active, operations)
-                except ValueError as exc:
-                    context.last_result = {"success": False, "message": str(exc)}
-                    await reject_finish(decision_event, str(exc), title="指令完成请求未通过")
-                    continue
-
             if decision.kind == "observe":
                 wait = decision.raw_args.get("wait_seconds", 0)
                 consecutive_observes += 1
@@ -233,12 +224,6 @@ class ExploreAgentLoopNode:
                     await reject_finish(decision_event, message)
                     continue
                 if active is not None:
-                    try:
-                        validate_completion(active, operations)
-                    except ValueError as exc:
-                        context.record_result({"success": False, "message": str(exc)})
-                        await reject_finish(decision_event, str(exc))
-                        continue
                     capture(active["id"], "after")
                     progress.complete()
 
@@ -287,9 +272,7 @@ class ExploreAgentLoopNode:
             try:
                 advance = decision.raw_args.get("complete_current_instruction", False)
                 if advance:
-                    validate_action_transition(active, next_instruction, decision.action, operations)
-                else:
-                    validate_action(active, decision.action)
+                    progress.validate_advance()
             except ValueError as exc:
                 context.last_result = {"success": False, "message": str(exc)}
                 await publisher.node_finished(stage="exploration", node="action_rejected", payload=text_event("动作未下发", str(exc)))

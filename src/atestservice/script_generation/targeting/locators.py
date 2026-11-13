@@ -7,10 +7,18 @@ from atestservice.script_generation.targeting.stability import requested_index, 
 from atestservice.ui.elements import contains, matches
 
 
-def selector_for(element, keys):
-    if not keys or len(keys) != len(set(keys)) or any(not element.get(key) for key in keys):
-        raise ValueError("选择的定位属性缺少现场值。")
-    return Selector(**{key: element[key] for key in keys})
+def selector_for(element, keys, *, purpose="目标控件"):
+    label = f"{purpose} {element['id']}"
+    available = "、".join(key for key in Selector.model_fields if element.get(key)) or "无"
+    if not keys:
+        raise ValueError(f"{label} 未选择定位属性；可用属性：{available}。")
+    # Attribute names are a set of constraints. Empty evidence cannot contribute
+    # a constraint; duplicates cannot make one stronger. Validate the remaining
+    # selector's stability and uniqueness through the normal pipeline.
+    selected = {key: element[key] for key in dict.fromkeys(keys) if element.get(key)}
+    if not selected:
+        raise ValueError(f"{label} 所选属性均为空或未提供：{'、'.join(dict.fromkeys(keys))}；可用属性：{available}。")
+    return Selector(**selected)
 
 
 def _safe_addition(element, key, goal, role):
@@ -54,7 +62,7 @@ def resolve_locator(pick, element, elements, goal, *, collection=False):
         parent = by_id.get(pick.scope_candidate_id)
         if not parent or parent == element or not contains(parent["bounds"], element["bounds"]):
             raise ValueError("缺少目标所属区域的可靠证据。")
-        scope = selector_for(parent, pick.scope_attributes)
+        scope = selector_for(parent, pick.scope_attributes, purpose="所属区域")
         problem = selector_problem(scope, parent, goal, "control_identity")
         if problem:
             raise ValueError(problem)
@@ -86,7 +94,7 @@ def resolve_locator(pick, element, elements, goal, *, collection=False):
                 keys = [key for key in ("resource_id", "description", "text") if _safe_addition(item, key, goal, "control_identity")]
                 if keys and contains(item["bounds"], element["bounds"]):
                     for key in keys:
-                        candidate_scope = selector_for(item, [key])
+                        candidate_scope = selector_for(item, [key], purpose="所属区域")
                         if selector_problem(candidate_scope, item, goal, "control_identity"):
                             continue
                         candidate_scope = _refine(item, candidate_scope, elements, goal, "control_identity")

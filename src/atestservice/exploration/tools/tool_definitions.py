@@ -87,15 +87,15 @@ class Home(_ActionToolArgs):
 
 
 class OpenMultitask(_ActionToolArgs):
-    """打开系统最近任务界面。"""
+    """打开系统最近任务界面；需要该行为时使用此工具，不用点击或滑动模拟系统手势。"""
 
 
 class OpenControl(_ActionToolArgs):
-    """打开系统控制中心。"""
+    """打开系统控制中心；需要该行为时使用此工具，不用坐标滑动模拟。"""
 
 
 class OpenNotification(_ActionToolArgs):
-    """打开系统通知栏。"""
+    """打开系统通知栏；需要该行为时使用此工具，不用坐标滑动模拟。"""
 
 
 class StartApp(_ActionToolArgs):

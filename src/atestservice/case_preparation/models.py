@@ -3,7 +3,7 @@ from typing import Literal
 from pydantic import BaseModel, ConfigDict, Field
 
 from atestservice.contracts.case import CaseSpec
-from atestservice.contracts.instructions import InstructionKind, VerificationAnchor
+from atestservice.contracts.instructions import VerificationAnchor
 
 
 class _ExtractionModel(BaseModel):
@@ -13,7 +13,6 @@ class _ExtractionModel(BaseModel):
 class ExtractedInstruction(_ExtractionModel):
     id: str = Field(min_length=1)
     text: str = Field(min_length=1)
-    kind: InstructionKind
 
 
 class ExtractedStep(_ExtractionModel):

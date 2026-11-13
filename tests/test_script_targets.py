@@ -82,6 +82,57 @@ class TargetTests(unittest.TestCase):
         selection.candidate_id = "invented"
         self.assertEqual(self.resolve([element()], selection).status, "coordinate")
 
+    def test_empty_or_entirely_unavailable_attributes_have_specific_diagnostics(self):
+        elements = [element("搜索", className="android.widget.Button")]
+        cases = [([], "未选择定位属性"), (["resource_id", "description"], "所选属性均为空或未提供：resource_id、description")]
+        for attributes, expected in cases:
+            with self.subTest(attributes=attributes):
+                result = self.resolve(elements, pick(attributes=attributes), goal="打开搜索")
+                self.assertEqual(result.status, "coordinate")
+                self.assertIn("来源观察 o0", result.rationale)
+                self.assertIn("目标控件 e0", result.rationale)
+                self.assertIn(expected, result.rationale)
+                self.assertIn("可用属性：text、class_name", result.rationale)
+                self.assertIsNone(result.locator)
+
+    def test_one_usable_attribute_survives_empty_or_duplicate_selected_attributes(self):
+        elements = [element("设置", resourceId=None, description="")]
+        for attributes in (["text"], ["text", "resource_id", "description"], ["text", "text", "resource_id"]):
+            for usage in ("action", "condition", "verification"):
+                with self.subTest(attributes=attributes, usage=usage):
+                    result = self.resolve(elements, pick(attributes=attributes), goal="打开设置", usage=usage)
+                    self.assertEqual(result.status, "resolved")
+                    self.assertEqual(result.locator.selector.model_dump(exclude_none=True), {"text": "设置"})
+                    self.assertEqual(result.notes, [])
+
+    def test_filtering_empty_fields_does_not_bypass_duplicates_or_dynamic_identity(self):
+        duplicate = self.resolve([element("点赞"), element("点赞", bounds=[500, 500, 600, 600])],
+                                 pick(attributes=["text", "resource_id"]))
+        self.assertEqual(duplicate.status, "coordinate")
+        self.assertIn("多个不可区分", duplicate.rationale)
+        dynamic = self.resolve([element("128赞")], pick(attributes=["text", "resource_id"]))
+        self.assertEqual(dynamic.status, "coordinate")
+        self.assertIn("动态展示值", dynamic.rationale)
+
+    def test_scope_can_use_one_valid_attribute_without_dropping_its_constraint(self):
+        elements = [element("点赞"), element("点赞", bounds=[500, 500, 600, 600]),
+                    element("指定区域", bounds=[0, 0, 250, 250])]
+        result = self.resolve(elements, pick(attributes=["text", "resource_id"], scope_candidate_id="e2",
+                                             scope_attributes=["text", "resource_id", "text"]))
+        self.assertEqual(result.status, "resolved")
+        self.assertEqual(result.locator.within.model_dump(exclude_none=True), {"text": "指定区域"})
+        self.assertEqual(result.locator.selector.text, "点赞")
+
+    def test_missing_scope_attribute_is_not_reported_as_missing_target_value(self):
+        elements = [element("点赞", resourceId="app:id/like"),
+                    element("列表区域", bounds=[0, 0, 250, 250])]
+        result = self.resolve(elements, pick(attributes=["resource_id"], scope_candidate_id="e1",
+                                             scope_attributes=["resource_id"]))
+        self.assertEqual(result.status, "coordinate")
+        self.assertIn("所属区域 e1", result.rationale)
+        self.assertIn("所选属性均为空或未提供：resource_id", result.rationale)
+        self.assertIn("可用属性：text", result.rationale)
+
     def test_overlapping_neighbor_that_does_not_cover_actual_click_is_rejected(self):
         result = self.resolve([element("搜索", bounds=[190, 190, 250, 250])], pick(), goal="打开搜索")
         self.assertEqual(result.status, "coordinate")

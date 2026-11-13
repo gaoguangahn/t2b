@@ -9,6 +9,7 @@ usage=condition：寻找可判断此条件是否出现的稳定目标，不能�
 - 点赞的“128赞”、播放量、价格、时间、昵称、随机标题和搜索推荐词通常是展示数据，不是功能控件身份。输入框 hint/placeholder 不能当搜索入口身份；“.*赞”也无法解决零赞时文字消失。稳定性不等于本帧唯一。
 - user_goal 是用户原要求，action_description 只是整理说明。用户明确指定的名称/文本可作 user_value，必须逐字来自 user_goal；“第一条内容”不能变成本次标题。不要因包含数字一律排除用户指定值。
 - 属性可组合。如果重复，优先用已观察区域 scope；index 指目标序号，scope_index 指所属条目序号，都从0开始，只用于用户明确要求的位置。“第一条内容的点赞”应先定位第一条内容，再找内部按钮，不能偷换成全局第一个有文字的点赞按钮，因为部分条目的点赞文字可能缺失。scope 的属性也必须稳定。
+- 一个语义匹配且稳定的属性已能唯一定位时，直接用这一项，不要求其他属性有值，不为凑全字段增加定位限制。程序会过滤所选属性中的空值并去重，再检查剩余组合的稳定性、唯一性和所属区域；过滤后有值不代表自动通过，当前页面唯一的动态值仍不能当作稳定身份。所属区域同样处理，不能因区域属性为空就丢掉用户要求的区域或序号。
 - 多个候选不等于无法定位。attribute_match_counts反映单属性的全页匹配量，优先选择最符合交互目的的控件，再用稳定ID、描述、class等组合及真实所属区域消歧；程序也会尝试给同一个目标补充最小稳定属性组合。有明确parent_id时可利用父节点，不把几何覆盖的任意容器当真实父节点。几何位置帮助确定本次目标，不能直接变成下次回放的固定索引。目标及区域都无法稳定区分时才unresolved。
 - 属性反映按钮状态（如已点赞/未点赞）时考虑回放入口状态，不随意绑定探索后的状态。
 - 对验证，动态值可能是要读取的内容，但不能当控件身份。增加1应运行时读取基准，不能固定本次快照数字。预期从user_goal解释，不能从观察值推导。状态指示文本用于验证条件时可以选择，和操作定位的稳定身份不是同一种用途。
@@ -26,6 +27,6 @@ verification.basis必须说明原预期与所选属性/特征的关系；UI替�
 
 ## 输出
 返回完整TargetResponse，顶层必须是对象，包含targets数组，数组内恰好一个与输入request_id一致的TargetPick，即{"targets": [{...}]}。使用函数调用时，这个完整对象就是TargetResponse函数的参数；不能只返回内部TargetPick、空对象{}或空参数。找不到可靠目标时仍返回该数组中的一项，kind="unresolved"并说明缺口，不能省略targets或返回空数组。其余字段按实际提供的Schema填写。
-candidate_id和scope_candidate_id必须来自candidate_observation_id指定的同一帧（默认锚点）；attributes/scope_attributes只选实际存在的字段，程序复制值，不输出猜测selector。
+candidate_id和scope_candidate_id必须来自candidate_observation_id指定的同一帧（默认锚点）。attributes/scope_attributes填属性名，不是属性值，只能选择对应节点上值非null且非空字符串的属性。字段名存在但值为null、空字符串或缺失，均不能选；不要为符合Schema把四种属性全部填上，不重复同一属性。只有text和class_name有值时，就从其中选择有稳定依据的一项或组合，不能补一个不存在的resource_id。kind=ui时attributes不能空；有scope_candidate_id时scope_attributes也不能空且必须用所属区域自身的值，无所属区域时scope_candidate_id=null、scope_attributes=[]、scope_index=null。程序复制现场值，不输出猜测selector；可用属性仍需满足稳定性和唯一性规则，不因缺少ID就绑定动态文本。
 kind=ui 需要候选与属性；kind=non_ui 仅用于明确不是 UI 目标的验证；无法可靠选择返回 unresolved，并说明缺口。
 attribute_role区分control_identity、user_value、state_indicator、dynamic_content；state_indicator仅用于上述UI特征验证，动态内容不能因为坐标吻合就作稳定操作定位。reason简述目标语义、位置/前后对应和稳定性依据。只选择一个最合适的目标，不因有多个候选就放弃，也不默认选第一个。不编造缺失ID，不编写框架代码。

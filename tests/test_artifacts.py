@@ -1,4 +1,5 @@
 import shutil
+import json
 import uuid
 import unittest
 from pathlib import Path
@@ -25,6 +26,13 @@ class ArtifactTests(unittest.TestCase):
             self.assertEqual(restored.exploration_result.trajectory.observations[0].screenshot.base64, "YWJj")
             self.assertEqual(restored.case_spec.steps[0].repeat, 7)
             self.assertEqual(restored.exploration_result.step_results[0].checkpoints[0].observation_id, "o1")
+            legacy = json.loads((path / "snapshot.json").read_text(encoding="utf-8"))
+            legacy["case_spec"]["steps"][0]["instructions"][0]["kind"] = "app_launch"
+            (path / "snapshot.json").write_text(json.dumps(legacy), encoding="utf-8")
+            restored_legacy = load_exploration_bundle(path)
+            instruction = restored_legacy.case_spec.steps[0].instructions[0]
+            self.assertEqual(set(instruction.model_dump()), {"id", "text"})
+            self.assertEqual(instruction.text, restored.case_spec.steps[0].instructions[0].text)
         finally:
             self.assertTrue(directory.resolve().is_relative_to((Path.cwd() / "data" / "test_artifacts").resolve()))
             shutil.rmtree(directory)

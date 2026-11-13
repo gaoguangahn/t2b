@@ -61,7 +61,7 @@ class CasePreparationTests(unittest.IsolatedAsyncioTestCase):
     async def test_single_iteration_normalizes_scope_without_moving_instruction_anchor(self):
         item = CaseExtraction(case_name="wifi", case_goal="关闭Wi-Fi", steps=[{
             "id": "s1", "goal": "关闭Wi-Fi", "repeat": 1,
-            "instructions": [{"id": "i1", "text": "关闭Wi-Fi", "kind": "ui"}]}], verifications=[{
+            "instructions": [{"id": "i1", "text": "关闭Wi-Fi"}]}], verifications=[{
             "id": "v1", "goal": "Wi-Fi确实关闭", "anchor": {"step_id": "s1", "instruction_id": "i1", "position": "after"},
             "scope": "outside_repeat"}])
         model = SimpleNamespace(invoke_structured=AsyncMock(return_value=item))
@@ -74,7 +74,7 @@ class CasePreparationTests(unittest.IsolatedAsyncioTestCase):
     async def test_repeated_case_requires_model_correction_and_preserves_expectation(self):
         item = CaseExtraction(case_name="repeat", case_goal="repeat", steps=[{
             "id": "s1", "goal": "操作", "repeat": 3,
-            "instructions": [{"id": "i1", "text": "操作", "kind": "ui"}]}], verifications=[{
+            "instructions": [{"id": "i1", "text": "操作"}]}], verifications=[{
             "id": "v1", "goal": "用户预期", "anchor": {"step_id": "s1", "instruction_id": "i1", "position": "after"},
             "scope": "outside_repeat"}])
         corrected = item.model_copy(deep=True)

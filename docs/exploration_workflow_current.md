@@ -54,11 +54,11 @@
 | --- | --- |
 | 手机动作 | 标记为false时执行当前指令；true时先校验前后两条指令与动作，再保存边界、推进并执行下一条动作；先登记 pending，再执行并自动采集新页面 |
 | Observe | 检查预算，可短暂等待，新增 observation；不新增 operation |
-| CompleteInstruction | 检查规定方法，绑定当前指令 after 检查点，推进游标，绑定下一条 before 检查点；不执行动作 |
+| CompleteInstruction | 绑定当前指令after检查点，推进游标，绑定下一条before检查点；不执行动作，不按工具类别判断完成 |
 | CompleteStep | 仅剩最后一条时可同时完成该指令并结束整块；全部已完成也可结束；多条尚未完成则拒绝；error 可直接结束 |
 | ReportBlocker | 返回阻塞结果，外层停止后续目标块 |
 
-方法策略：Instruction.kind 为 app_launch/app_stop/system_home/multitask 时分别要求 start_app/stop_app/home/open_multitask。方法不匹配则不下发；相应规定动作尚无成功记录时，也不能报告该指令完成。
+方法选择由操作提示词和工具说明指导：启动应用用StartApp、停止应用用StopApp、系统桌面用Home、多任务用OpenMultitask、控制中心用OpenControl、通知栏用OpenNotification。Instruction只保存id/text，一条要求可以组合多个工具。已删除基于kind的动作/完成门禁、方法映射和policy.py；程序不再判断某条指令必须先成功调用哪种方法。参数校验、进度边界和执行结果处理继续保留。
 
 普通 ui 指令完成由原操作 Agent 结合最新截图、实际控件状态和执行记录判断，可以随下一条手机动作报告，也可以通过独立控制工具报告。额外的完成复核模型调用及其专用协议、提示词和配置已经撤掉。
 
@@ -68,7 +68,7 @@
 
 只有手机动作工具接收 complete_current_instruction：false 表示动作属于当前指令；true 表示当前指令在本动作之前已完成，本动作属于紧邻的下一条指令。它不能表达动作执行后的完成预期。Observe、CompleteInstruction、CompleteStep、ReportBlocker不携带该标记，避免控制工具叠加完成语义。
 
-true 的执行顺序：先检查存在下一条指令、当前规定方法已有成功记录、动作满足下一条的方法约束（policy.validate_action_transition），参数在工具解析时已校验；全部检查通过后，才捕获当前 after 边界、推进游标、捕获下一条 before 边界、登记并下发动作。任何校验失败均不推进、不提前记录边界、不下发动作，反馈给原 Agent 纠正。
+true的执行顺序：工具参数先由决策解析校验，再由progress.validate_advance确认存在下一条指令；通过后捕获当前after边界、推进游标、捕获下一条before边界、登记并下发动作。不按当前或下一条的语义类别校验工具，不做独立完成复核；语义完成依据由原操作Agent判断。校验失败不推进、不记录边界、不下发动作。
 
 没有下一条指令时，动作加true会被拒绝；最后一条仍需动作时用false，看到动作后页面已达到要求再CompleteStep。不能先推进到末尾再丢弃动作。下一动作下发后的实际执行失败属于下一条指令，已经合法完成的上一条不回滚；原有执行结果与恢复逻辑继续生效。
 
@@ -84,7 +84,7 @@ true 的执行顺序：先检查存在下一条指令、当前规定方法已有
   → 若最后一条要求已达到，调用 CompleteStep，保存 i2 和整块完成边界
 ```
 
-当前指令已完成但暂时不选下一动作时，可单独CompleteInstruction。最后一条可直接通过CompleteStep完成，不必先CompleteInstruction；也支持全部先CompleteInstruction再CompleteStep。控制工具不下发给手机、不新增operation，正常快速路径每轮仍只调用一个工具，不增加独立模型请求。原有动作预算、Observe预算、方法约束和失败停止行为继续生效。
+当前指令已完成但暂时不选下一动作时，可单独CompleteInstruction。最后一条可直接通过CompleteStep完成，不必先CompleteInstruction；也支持全部先CompleteInstruction再CompleteStep。控制工具不下发给手机、不新增operation，正常快速路径每轮仍只调用一个工具，不增加独立模型请求。原有动作预算、Observe预算、参数校验和失败停止行为继续生效。
 
 ## 5. 实际发送给模型的上下文
 
@@ -98,7 +98,7 @@ user：当前 observation ID + 当前截图 + 控件状态证据
 
 第二条 user 内容按当前代码包含：
 
-- 当前块 id、单轮 goal、全部 instructions（JSON，包含 id/text/kind，不包含参数表；原值和次数完整保留在描述中）。
+- 当前块 id、单轮 goal、全部 instructions（JSON，包含 id/text，不包含参数表；原值和次数完整保留在描述中）。
 - 最近六个前序 step 的 id、状态、summary。
 - 当前块已报告完成的指令 ID。
 - 当前活动指令 ID。

@@ -11,6 +11,60 @@ from test_exploration_controls import make_node
 
 
 class CompletionControlTests(unittest.IsolatedAsyncioTestCase):
+    async def test_legacy_category_cannot_restrict_composite_instruction_or_leak_into_context(self):
+        node, llm = make_node([
+            ("StartApp", {"app_name": "浏览器"}), ("Click", {"bounds": [100, 100, 200, 200]}),
+            ("Back", {}), ("Home", {}), ("CompleteStep", {"summary": "完成复合流程"}),
+        ])
+        result = await node({"case_spec": {"steps": [{"id": "s1", "goal": "启动、关闭弹窗、返回桌面", "instructions": [
+            {"id": "i1", "text": "启动浏览器、关闭弹窗后返回系统桌面", "kind": "app_launch"}]}]}})
+        self.assertEqual(result["run"]["status"], "done")
+        self.assertEqual([op["action"]["type"] for op in result["trajectory"]["operations"]], ["start_app", "click", "back", "home"])
+        self.assertNotIn('"kind"', llm.requests[0][1]["content"])
+
+    async def test_instruction_transition_is_not_gated_by_a_tool_category(self):
+        node, _ = make_node([
+            ("Click", {"bounds": [100, 100, 200, 200]}),
+            ("Home", {"complete_current_instruction": True}), ("CompleteStep", {"summary": "done"}),
+        ])
+        case = CaseSpec(case_name="查看再回桌面", steps=[{"id": "s1", "goal": "查看并返回系统桌面", "instructions": [
+            {"id": "i1", "text": "查看页面"}, {"id": "i2", "text": "返回系统桌面"}]}])
+        result = await node({"case_spec": case.model_dump(mode="json")})
+        self.assertEqual(result["run"]["status"], "done")
+        self.assertEqual([op["semantic_ref"]["instruction_id"] for op in result["trajectory"]["operations"]], ["i1", "i2"])
+    async def test_launch_can_dismiss_popup_before_completing_last_instruction(self):
+        node, llm = make_node([
+            ("StartApp", {"app_name": "QQ浏览器"}),
+            ("Click", {"bounds": [100, 100, 200, 200]}),
+            ("CompleteStep", {"summary": "QQ浏览器已启动并关闭遮挡弹窗"}),
+        ])
+        case = CaseSpec(case_name="启动浏览器", steps=[{"id": "s1", "goal": "启动QQ浏览器", "instructions": [
+            {"id": "i1", "text": "启动QQ浏览器"}]}],
+            verifications=[{"id": "v1", "goal": "原预期", "anchor": {"step_id": "s1", "instruction_id": "i1"}}])
+        result = await node({"case_spec": case.model_dump(mode="json")})
+        self.assertEqual(result["run"]["status"], "done")
+        self.assertEqual([op["action"]["type"] for op in result["trajectory"]["operations"]], ["start_app", "click"])
+        self.assertEqual([op["semantic_ref"]["instruction_id"] for op in result["trajectory"]["operations"]], ["i1", "i1"])
+        self.assertEqual(result["step_results"][0]["checkpoints"][0]["observation_id"], "obs2")
+        self.assertEqual(len(llm.requests), 3)
+        self.assertEqual(node.step_loop.executor.execute.await_count, 2)
+
+    async def test_launch_popup_cleanup_preserves_boundary_before_next_instruction(self):
+        node, llm = make_node([
+            ("StartApp", {"app_name": "QQ浏览器"}),
+            ("Click", {"bounds": [100, 100, 200, 200]}),
+            ("Click", {"bounds": [300, 300, 400, 400], "complete_current_instruction": True}),
+            ("CompleteStep", {"summary": "已进入搜索"}),
+        ])
+        case = CaseSpec(case_name="启动后搜索", steps=[{"id": "s1", "goal": "启动QQ浏览器并搜索", "instructions": [
+            {"id": "i1", "text": "启动QQ浏览器"}, {"id": "i2", "text": "进入搜索"}]}],
+            verifications=[{"id": "v1", "goal": "原预期", "anchor": {"step_id": "s1", "instruction_id": "i1"}}])
+        result = await node({"case_spec": case.model_dump(mode="json")})
+        self.assertEqual(result["run"]["status"], "done")
+        self.assertEqual([op["semantic_ref"]["instruction_id"] for op in result["trajectory"]["operations"]], ["i1", "i1", "i2"])
+        self.assertEqual(result["step_results"][0]["checkpoints"][0]["observation_id"], "obs2")
+        self.assertEqual(len(llm.requests), 4)
+
     async def test_last_instruction_flag_is_rejected_without_advancing(self):
         node, llm = make_node([
             ("Click", {"bounds": [100, 100, 200, 200], "complete_current_instruction": True}),
@@ -90,39 +144,6 @@ class CompletionControlTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn('"id": "i2"', llm.requests[1][1]["content"].split("紧邻的下一条要求：")[1])
         llm.invoke_structured.assert_not_awaited()
 
-    async def test_invalid_next_action_does_not_advance_or_capture_boundary(self):
-        node, llm = make_node([
-            ("Click", {"bounds": [100, 100, 200, 200]}),
-            ("Click", {"bounds": [100, 100, 200, 200], "complete_current_instruction": True}),
-            ("StartApp", {"app_name": "设置", "complete_current_instruction": True}),
-            ("CompleteStep", {"summary": "已启动设置"}),
-        ])
-        case = CaseSpec(case_name="launch", steps=[{"id": "s1", "goal": "查看再启动", "instructions": [
-            {"id": "i1", "text": "查看页面"}, {"id": "i2", "text": "启动设置", "kind": "app_launch"}]}],
-            verifications=[{"id": "v1", "goal": "预期", "anchor": {"step_id": "s1", "instruction_id": "i1"}}])
-        result = await node({"case_spec": case.model_dump(mode="json")})
-        self.assertEqual(result["run"]["status"], "done")
-        self.assertEqual(node.step_loop.executor.execute.await_count, 2)
-        self.assertIn("已报告完成的要求 ID：[]", llm.requests[2][1]["content"])
-        self.assertIn("当前要求 ID：i1", llm.requests[2][1]["content"])
-        checkpoints = result["step_results"][0]["checkpoints"]
-        self.assertEqual(len(checkpoints), 1)
-        self.assertEqual(checkpoints[0]["observation_id"], "obs1")
-        self.assertEqual(result["trajectory"]["operations"][1]["semantic_ref"]["instruction_id"], "i2")
-
-    async def test_transition_cannot_bypass_current_required_method(self):
-        node, llm = make_node([
-            ("Click", {"bounds": [100, 100, 200, 200], "complete_current_instruction": True}),
-            ("StartApp", {"app_name": "设置"}),
-            ("Click", {"bounds": [100, 100, 200, 200], "complete_current_instruction": True}),
-            ("CompleteStep", {"summary": "已点击WLAN"}),
-        ])
-        case = CaseSpec(case_name="launch", steps=[{"id": "s1", "goal": "启动后点击", "instructions": [
-            {"id": "i1", "text": "启动设置", "kind": "app_launch"}, {"id": "i2", "text": "点击WLAN"}]}])
-        result = await node({"case_spec": case.model_dump(mode="json")})
-        self.assertEqual(result["run"]["status"], "done")
-        self.assertEqual([op["action"]["type"] for op in result["trajectory"]["operations"]], ["start_app", "click"])
-        self.assertIn("当前要求 ID：i1", llm.requests[1][1]["content"])
 
     async def test_malformed_next_action_is_rejected_before_progress_changes(self):
         node, llm = make_node([

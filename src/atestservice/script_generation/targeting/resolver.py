@@ -108,7 +108,7 @@ def resolve_pick(request: TargetRequest, pick: TargetPick, elements: list[dict],
         return TargetResolution(description=pick.target_description, status="resolved", observation_id=request.observation_id,
                                 rationale=rationale, locator=locator, verification=verification)
     except (ValueError, TypeError) as error:
-        return _fallback(request, str(error))
+        return _fallback(request, f"来源观察 {source_id}：{error}")
 
 
 async def resolve_targets(evidence: Evidence, plan: ScriptPlan, llm: StructuredLLM) -> dict[str, TargetResolution]:
