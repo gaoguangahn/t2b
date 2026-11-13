@@ -19,7 +19,9 @@ dependencies = [
 atestservice = "atestservice.main:main"
 
 [dependency-groups]
-dev = []
+dev = [
+    "uiautomator2>=3.0.0",
+]
 llm-local = [
     "opencv-python>=4.8.0",
     "numpy>=1.26.0",
@@ -30,7 +32,7 @@ llm-local = [
 where = ["src"]
 
 [tool.setuptools.package-data]
-atestservice = ["case_preparation/prompts/*.md", "exploration/prompts/*.md", "script_generation/prompts/*.md", "script_generation/profiles/*.md"]
+atestservice = ["case_preparation/prompts/*.md", "exploration/prompts/*.md", "exploration/case_structuring/prompts/*.md", "script_generation/prompts/*.md", "script_generation/profiles/*.md"]
 
 [tool.setuptools.exclude-package-data]
 "*" = ["config.ini", "models.ini", "*.local.*"]

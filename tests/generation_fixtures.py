@@ -3,6 +3,7 @@ import base64
 from atestservice.contracts.case import CaseSpec
 from atestservice.contracts.exploration import ExplorationResult
 from atestservice.script_generation.evidence import Evidence
+from atestservice.ui.elements import normalize_elements
 
 
 def element(text="搜索", **kwargs):
@@ -15,7 +16,7 @@ def evidence(pages=("home", "result"), *, elements=None, actions=None, goal="打
     observations = [{"id": f"o{i}", "index": i, "package": "example.app", "activity": "MainActivity",
                      "screen_size": {"width": 1000, "height": 1000},
                      "screenshot": {"filename": f"o{i}.jpg", "base64": base64.b64encode(page.encode()).decode()},
-                     "elements": elements if elements is not None else [element()]}
+                     "elements": normalize_elements(elements if elements is not None else [element()], {"width": 1000, "height": 1000})}
                     for i, page in enumerate(pages)]
     operations = []
     for i in range(len(pages) - 1):

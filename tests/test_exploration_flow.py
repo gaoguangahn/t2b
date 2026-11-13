@@ -13,7 +13,6 @@ from atestservice.contracts.exploration import ExplorationResult
 from atestservice.contracts.script import ScriptPlan, TargetResolution
 from atestservice.script_generation.evidence import Evidence
 from atestservice.script_generation.ir_builder import build_script_ir
-from atestservice.contracts.rendering import render_case
 
 
 class FakeLLM:
@@ -108,9 +107,6 @@ class ExplorationFlowTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual([n["type"] for n in ir["steps"][0]["body"]], ["action", "verify", "action"])
         self.assertEqual(ir["steps"][1]["verification_id"], "v2")
 
-    def test_confirmation_keeps_internal_verification_position(self):
-        text = render_case(example_case())
-        self.assertLess(text.index("UNSEEN_EXPECTATION"), text.index("操作：return"))
 
 
 if __name__ == "__main__":

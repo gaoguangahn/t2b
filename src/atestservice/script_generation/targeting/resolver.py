@@ -13,7 +13,6 @@ from atestservice.script_generation.targeting.context import build_target_contex
 from atestservice.script_generation.targeting.locators import resolve_locator, validate_anchor_locator
 from atestservice.script_generation.targeting.verification import validate_verification
 from atestservice.ui.coordinate import bounds_to_normalized_point
-from atestservice.ui.elements import target_pixels
 from atestservice.ui.spatial import spatial_relation
 
 CLICK_TYPES = {"click", "double_click", "long_click"}
@@ -98,7 +97,7 @@ def resolve_pick(request: TargetRequest, pick: TargetPick, elements: list[dict],
         ):
             return _fallback(request, "UI状态特征存在判断需包含实际状态文案或描述，不能只检查开关控件存在。")
         if request.usage == "action":
-            expected = target_pixels(request.bounds, observation.screen_size)
+            expected = list(request.bounds.root) if request.bounds else None
             spatial = spatial_relation(expected, element["bounds"], observation.screen_size)
             if spatial["relation"] not in {"point_hit", "overlap", "nearby"}:
                 return _fallback(request, "所选控件与原操作区域缺少足够重叠或邻近依据。")

@@ -14,12 +14,12 @@ uv run atestservice
 
 模型节可通过 `extra_body` 配置接口专用参数，值必须是 JSON 对象，例如 `extra_body = {"enable_thinking": false}`。支持嵌套对象；不填写时使用空对象，不额外发送参数。布尔值使用 JSON 的 `true` / `false`，字段名使用双引号，值后不要追加行尾注释。配置只应用于所属模型，修改后重启服务，具体参数以该模型接口或网关支持情况为准。
 
-模型输出在发送前统一生成并校验严格 Schema；prepare 使用独立的 CaseExtraction 协议，只整理描述与结构，再转换为 CaseSpec，不提前提取参数。工具和实际参数由探索阶段决定，HTTP 接口不变。正常/debug 输出、三阶段模型调用和探索工具均经过相同的 Schema 边界，详见 [模型交互检查说明](docs/llm_schema_contracts.md)。
+模型输出在发送前统一生成并校验严格 Schema；prepare 只返回 PreparedCase（标题与可编辑文本），不生成执行结构。用户确认后，由 exploration/case_structuring 使用 CaseExtraction 将最终确认稿忠实转换为 CaseSpec，不重新优化、不提前提取参数。工具和实际参数由探索阶段决定，HTTP 接口不变。正常/debug 输出、三阶段模型调用和探索工具均经过相同的 Schema 边界，详见 [模型交互检查说明](docs/llm_schema_contracts.md)。
 
 ## 当前链路
 
-1. 整理用户输入为 CaseSpec，从同一结构渲染有序确认稿。
-2. 用户确认后，按业务目标块逐块探索。每块只执行一轮，轮内指令按顺序完成。
+1. 优化服务整理原始描述，直接返回用户可编辑的确认稿。插件负责要求用户先优化再确认。
+2. 执行入口将最终确认稿转换为 CaseSpec，不再次优化；随后按业务目标块逐块探索。每块只执行一轮，轮内指令按顺序完成。
 3. 在验证锚点保存页面证据，不执行业务断言。
 4. 审查动作、选择定位、组装 IR，按框架 profile 生成代码。repeat 仅控制整块代码的重复次数。
 
@@ -30,8 +30,8 @@ uv run atestservice
 ```text
 src/atestservice/
   contracts/          共享用例、动作、观测和探索结果
-  case_preparation/   描述解析、校验与确认稿
-  exploration/        单轮目标块执行、工具、指令进度和页面采集
+  case_preparation/   独立的描述优化服务与可编辑确认稿
+  exploration/        确认稿结构转换、单轮目标块执行、工具和页面采集
   script_generation/  审查、定位、IR、框架 profile 与代码生成
   workflow/           阶段编排及序列化图状态
   runtime/            事件接口、展示 payload、快照存取
@@ -61,7 +61,7 @@ src/atestservice/
 
 批量 `inputs/cases` 和 `caseId` 已移除；旧批量请求返回 422。插件需将请求 `inputs[]` 改成 `input`，直接读取响应的 `title/ editableText`，不再读取 `cases[0]`。整理事件节点改为 `prepare_case`，产物为 `prepared_case.json`，内容是单个对象。创建 Run 的接口保持不变。
 
-`CasePreparationService` 负责单个草稿和进度事件，`CaseParser` 负责提示词与模型解析；执行前的 `StructureCaseNode` 复用同一个 parser。解析提示词位于 `case_preparation/prompts/parse_case.md`，模型仍参与整理。
+`CasePreparationService` 独立调用优化模型，输出 `PreparedCase(title, editable_text)`，提示词位于 `case_preparation/prompts/optimize_case.md`。执行前的 `StructureCaseNode`、`CaseParser` 和模型结构协议位于 `exploration/case_structuring/`，使用 `prompts/structure_case.md`，只对用户最终确认稿做格式与引用关系转换，不润色、补步骤或判断业务预期。正常优化和结构转换各一次模型请求，仅输出结构错误时最多纠正两次；不增加独立复核。HTTP 字段和事件节点保持不变。
 
 ## 关键结构
 
@@ -79,6 +79,8 @@ CaseSpec 包含 steps 与 verifications。step 保留 goal、repeat 和有序 in
 ```
 
 测试使用假模型与假设备，覆盖字面值、引用校验、单轮执行、验证锚点、循环 IR、异常记录、完整图与事件、快照往返。
+
+开发依赖包含 `uiautomator2`，`uv sync --locked` 默认安装到项目 `.venv`。可直接在本项目环境中连接真机，验证 `tests/get_page_elements.py` 的采集方法，无需借用其他工程的 Python 环境。
 
 显式调用真实模型的离线生成工具：
 

@@ -1,4 +1,4 @@
-﻿"""基于插件动作能力采集观察信息。"""
+"""调用插件采集现场；统一控件字段和坐标后保存，保留完整快照。"""
 
 from __future__ import annotations
 
@@ -12,6 +12,7 @@ from atestservice.contracts.observation import (
     ScreenshotArtifact,
 )
 from atestservice.device.client import DeviceClient
+from atestservice.ui.elements import normalize_elements
 
 
 class ObservationStore:
@@ -61,7 +62,7 @@ class ObservationStore:
                 mime_type="image/jpeg",
                 base64=screenshot_base64,
             ),
-            elements=[e for e in elements if isinstance(e, dict)],
+            elements=normalize_elements(elements, screen_size),
             capture_started_at=started_at,
             capture_finished_at=datetime.now(timezone.utc).isoformat(),
             limitations=limitations,
@@ -78,10 +79,3 @@ class ObservationStore:
     def _optional_string(data: dict[str, Any], key: str) -> str | None:
         value = data.get(key)
         return value if isinstance(value, str) and value else None
-
-    @staticmethod
-    def _require_list(data: dict[str, Any], key: str) -> list[dict[str, Any]]:
-        value = data.get(key)
-        if not isinstance(value, list):
-            raise TypeError(f"plugin response field {key} must be list")
-        return [item for item in value if isinstance(item, dict)]

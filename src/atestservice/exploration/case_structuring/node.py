@@ -1,11 +1,11 @@
-"""Build a minimal case spec for mobile agent execution."""
+"""执行入口：将确认稿结构化并写入工作流，不调用用例优化服务。"""
 
 from __future__ import annotations
 
 from typing import Any
 
 from atestservice.contracts.case import CaseSpec
-from atestservice.case_preparation.parser import CaseParser
+from atestservice.exploration.case_structuring.parser import CaseParser
 
 from atestservice.runtime.events import NoopAgentEventPublisher
 from atestservice.llm import StructuredLLM
@@ -13,7 +13,7 @@ from atestservice.workflow.state import MobileAgentState
 from atestservice.runtime.event_payloads import json_event, text_event
 
 class StructureCaseNode:
-    """Parse confirmed editable text into the first-stage case spec."""
+    """把用户确认后的文本转换成探索所需的 CaseSpec。"""
 
     def __init__(self, llm: StructuredLLM | None = None, *, parser: CaseParser | None = None):
         self.parser = parser or CaseParser(llm=llm)
@@ -40,7 +40,7 @@ class StructureCaseNode:
         await publisher.node_started(
             stage="exploration",
             node="build_case_spec",
-            label="正在解析结构化用例",
+            label="正在转换确认稿结构",
         )
         case_spec = await self.parser.parse(raw_text)
         data = case_spec.model_dump(mode="json")
@@ -49,7 +49,7 @@ class StructureCaseNode:
             node="build_case_spec",
             payload=json_event(
                 "结构化用例完成",
-                "已生成进入 Agent Loop 前使用的结构化数据。",
+                "已按确认稿转换执行结构，未重新优化用例。",
                 "case_spec.json",
                 data,
             ),

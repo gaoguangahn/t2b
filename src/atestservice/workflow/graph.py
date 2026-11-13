@@ -16,7 +16,7 @@ from atestservice.runtime.events import AgentEventPublisher
 from typing import Any
 
 from atestservice.exploration.config import AgentConfig
-from atestservice.case_preparation.structure_case import StructureCaseNode
+from atestservice.exploration.case_structuring import StructureCaseNode
 from atestservice.exploration import CaseStepRunnerNode
 from atestservice.workflow.initialize import initialize_state
 from atestservice.script_generation.script_gen_node import ScriptGenNode

@@ -27,7 +27,7 @@
 
 ## 已确认的约束：实施时不重新讨论
 
-更新：用户已确认整理和生成都只处理一个用例。批量整理能力已删除；新增批量体验将由插件另行实现。CasePreparationService 和 StructureCaseNode 共用独立 CaseParser，不再由 Node 调用 Node。整理 API 的单对象协议见 README，插件需同步适配。
+更新：用户已确认整理和生成都只处理一个用例。批量整理能力已删除；新增批量体验将由插件另行实现。CasePreparationService 只优化描述；StructureCaseNode 与 CaseParser 位于 exploration/case_structuring，独立转换用户确认稿，不再复用优化流程。整理 API 的单对象协议见 README，插件需同步适配。
 
 1. 产品是用例脚本生成服务。第一阶段整理意图，第二阶段探索手机，第三阶段生成脚本。
 2. 每个目标块 step 只探索一遍；step.repeat 仅用于代码生成，不引入循环探索/采样策略。

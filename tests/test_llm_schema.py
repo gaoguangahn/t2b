@@ -12,8 +12,9 @@ import httpx
 from langchain_openai import ChatOpenAI
 from pydantic import BaseModel, ConfigDict, ValidationError
 
-from atestservice.case_preparation.models import CaseExtraction
-from atestservice.case_preparation.parser import CaseParser
+from atestservice.exploration.case_structuring.models import CaseExtraction
+from atestservice.exploration.case_structuring.parser import CaseParser
+from atestservice.case_preparation.service import PreparedCase
 from atestservice.contracts.case import CaseSpec
 from atestservice.contracts.script import CodegenResult
 from atestservice.exploration.tools.tool_definitions import EXPLORE_ACTION_TOOLS, tool_call_to_decision
@@ -37,6 +38,7 @@ class OpenParameters(BaseModel):
 
 RESPONSES = [
     (CaseExtraction, CASE),
+    (PreparedCase, {"title": "关闭蓝牙", "editable_text": "1. 关闭蓝牙，验证开关关闭"}),
     (PlanningResponse, {"plan": {"schema_version": "1.0", "actions": [], "conditions": [], "omitted_segments": [], "issues": []}, "observation_requests": []}),
     (TargetResponse, {"targets": [{"request_id": "op0", "kind": "unresolved", "target_description": "目标", "candidate_id": None,
                                   "candidate_observation_id": None, "verification": None,

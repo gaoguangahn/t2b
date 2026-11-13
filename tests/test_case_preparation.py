@@ -1,3 +1,4 @@
+"""优化服务独立返回可编辑文本，正式执行结构由另一入口生成。"""
 import json
 import unittest
 from types import SimpleNamespace
@@ -5,106 +6,76 @@ from unittest.mock import AsyncMock, patch
 
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
+from langchain_core.exceptions import OutputParserException
 
-from atestservice.case_preparation.parser import CaseParser
-from atestservice.case_preparation.models import CaseExtraction
-from atestservice.case_preparation.service import CasePreparationService
-from atestservice.case_preparation.structure_case import StructureCaseNode
+from atestservice.case_preparation.service import CasePreparationService, PreparedCase
 from atestservice.config import ServerSettings
-from atestservice.contracts.case import CaseSpec
 from atestservice.runs.repository import InMemoryRunRepository
 from atestservice.runs.routes import router
 from atestservice.runs.service import RunService
 from test_workflow import Publisher
 
 
-def extraction(case):
-    data = case.model_dump(mode="json", exclude={"schema_version", "source_revision"})
-    return CaseExtraction.model_validate(data)
-
-
 class CasePreparationTests(unittest.IsolatedAsyncioTestCase):
-    async def test_service_and_node_share_parser(self):
+    async def test_optimization_returns_text_without_creating_execution_structure(self):
         source = '输入 "a  b" + C++'
-        case = CaseSpec(case_name="原值", steps=[{"id": "s1", "goal": source}])
-        model = SimpleNamespace(invoke_structured=AsyncMock(return_value=extraction(case)))
-        parser = CaseParser(llm=model)
+        text = '【用例名称】\n输入内容\n【流程】\n1. 操作：'+source
+        expected = PreparedCase(title="输入内容", editable_text=text)
+        model = SimpleNamespace(invoke_structured=AsyncMock(return_value=expected))
         publisher = Publisher()
-        draft = await CasePreparationService(parser).prepare(source, event_publisher=publisher)
-        result = await StructureCaseNode(parser=parser)({"request": {"raw_text": source}})
-        self.assertEqual(model.invoke_structured.await_count, 2)
+        draft = await CasePreparationService(llm=model).prepare(source, event_publisher=publisher)
+        self.assertEqual(draft, expected)
         prompt, schema = model.invoke_structured.call_args.args
-        self.assertEqual(schema, CaseExtraction)
+        self.assertIs(schema, PreparedCase)
+        self.assertEqual(set(schema.model_fields), {"title", "editable_text"})
         self.assertIn(json.dumps({"raw_text": source}, ensure_ascii=False), prompt)
-        self.assertIn(source, draft.editable_text)
-        self.assertNotIn("明确参数：", draft.editable_text)
-        self.assertEqual(result["case_spec"]["source_revision"], parser_revision(source))
+        self.assertNotIn("{raw_case_json}", prompt)
+        model.invoke_structured.assert_awaited_once()
         self.assertEqual(publisher.events[-1]["node"], "prepare_case")
         artifact = publisher.events[-1]["payload"]["blocks"][1]
         self.assertEqual(artifact["filename"], "prepared_case.json")
-        self.assertIsInstance(artifact["content"], dict)
+        self.assertEqual(artifact["content"], expected.model_dump())
 
     async def test_empty_input_does_not_call_model(self):
-        parser = SimpleNamespace(parse=AsyncMock())
+        model = SimpleNamespace(invoke_structured=AsyncMock())
         with self.assertRaises(ValueError):
-            await CasePreparationService(parser).prepare("  ")
-        parser.parse.assert_not_awaited()
+            await CasePreparationService(llm=model).prepare("  ")
+        model.invoke_structured.assert_not_awaited()
 
     async def test_failure_publishes_error_without_finished_draft(self):
         publisher = Publisher()
-        parser = SimpleNamespace(parse=AsyncMock(side_effect=ValueError("invalid case")))
-        with self.assertRaisesRegex(ValueError, "invalid case"):
-            await CasePreparationService(parser).prepare("描述", event_publisher=publisher)
-        self.assertEqual(len(publisher.events), 2)
-        self.assertEqual(publisher.events[-1]["message"], "invalid case")
-
-    async def test_single_iteration_normalizes_scope_without_moving_instruction_anchor(self):
-        item = CaseExtraction(case_name="wifi", case_goal="关闭Wi-Fi", steps=[{
-            "id": "s1", "goal": "关闭Wi-Fi", "repeat": 1,
-            "instructions": [{"id": "i1", "text": "关闭Wi-Fi"}]}], verifications=[{
-            "id": "v1", "goal": "Wi-Fi确实关闭", "anchor": {"step_id": "s1", "instruction_id": "i1", "position": "after"},
-            "scope": "outside_repeat"}])
-        model = SimpleNamespace(invoke_structured=AsyncMock(return_value=item))
-        result = await CaseParser(model).parse("到设置中关闭wifi开关并且验证确实关闭了开关")
-        self.assertEqual(result.verifications[0].scope, "each_iteration")
-        self.assertEqual(result.verifications[0].anchor.instruction_id, "i1")
-        self.assertEqual(item.verifications[0].scope, "outside_repeat")
-        model.invoke_structured.assert_awaited_once()
-
-    async def test_repeated_case_requires_model_correction_and_preserves_expectation(self):
-        item = CaseExtraction(case_name="repeat", case_goal="repeat", steps=[{
-            "id": "s1", "goal": "操作", "repeat": 3,
-            "instructions": [{"id": "i1", "text": "操作"}]}], verifications=[{
-            "id": "v1", "goal": "用户预期", "anchor": {"step_id": "s1", "instruction_id": "i1", "position": "after"},
-            "scope": "outside_repeat"}])
-        corrected = item.model_copy(deep=True)
-        corrected.verifications[0].scope = "each_iteration"
-        model = SimpleNamespace(invoke_structured=AsyncMock(side_effect=[item, corrected]))
-        case = await CaseParser(model).parse("每轮操作后验证，重复3次")
-        self.assertEqual(model.invoke_structured.await_count, 2)
-        self.assertIn("outside_repeat must anchor", model.invoke_structured.call_args.args[0])
-        self.assertEqual(case.verifications[0].goal, "用户预期")
-        self.assertEqual(case.steps[0].repeat, 3)
-        model.invoke_structured = AsyncMock(return_value=item)
-        with self.assertRaisesRegex(ValueError, "纠正两次"):
-            await CaseParser(model).parse("描述")
-        self.assertEqual(model.invoke_structured.await_count, 3)
-
-    async def test_json_parse_errors_are_retried_but_provider_failures_are_not(self):
-        from langchain_core.exceptions import OutputParserException
-        valid = extraction(CaseSpec(case_name="case", steps=[{"id": "s1", "goal": "操作"}]))
-        model = SimpleNamespace(invoke_structured=AsyncMock(side_effect=[OutputParserException("bad json"), valid]))
-        await CaseParser(model).parse("描述")
-        self.assertEqual(model.invoke_structured.await_count, 2)
-        model.invoke_structured = AsyncMock(side_effect=RuntimeError("provider unavailable"))
+        model = SimpleNamespace(invoke_structured=AsyncMock(side_effect=RuntimeError("provider unavailable")))
         with self.assertRaisesRegex(RuntimeError, "provider unavailable"):
-            await CaseParser(model).parse("描述")
+            await CasePreparationService(llm=model).prepare("描述", event_publisher=publisher)
+        self.assertEqual(len(publisher.events), 2)
+        self.assertEqual(publisher.events[-1]["message"], "provider unavailable")
         model.invoke_structured.assert_awaited_once()
 
+    async def test_invalid_output_format_is_retried_without_execution_schema(self):
+        expected = PreparedCase(title="关闭蓝牙", editable_text="关闭蓝牙，验证关闭")
+        model = SimpleNamespace(invoke_structured=AsyncMock(side_effect=[OutputParserException("bad json"), expected]))
+        self.assertEqual(await CasePreparationService(llm=model).prepare("关闭蓝牙，验证关闭"), expected)
+        self.assertEqual(model.invoke_structured.await_count, 2)
+        self.assertIn("只纠正输出格式", model.invoke_structured.call_args.args[0])
+        self.assertTrue(all(call.args[1] is PreparedCase for call in model.invoke_structured.call_args_list))
 
-def parser_revision(text):
-    import hashlib
-    return hashlib.sha256(text.encode("utf-8")).hexdigest()
+    async def test_confirmed_edit_is_structured_without_optimizing_it_again(self):
+        from atestservice.exploration.case_structuring import StructureCaseNode
+        from atestservice.exploration.case_structuring.models import CaseExtraction
+        edited = '1) 输入 "a  b"\n   验证：显示 "a  b"'
+        extracted = CaseExtraction(case_name="输入", case_goal="", steps=[{
+            "id": "s1", "goal": '输入 "a  b"', "repeat": 1,
+            "instructions": [{"id": "i1", "text": '输入 "a  b"'}]}], verifications=[{
+            "id": "v1", "goal": '显示 "a  b"', "anchor": {"step_id": "s1", "instruction_id": "i1", "position": "after"},
+            "scope": "each_iteration"}])
+        draft = PreparedCase(title="输入", editable_text='1. 输入 "a"，验证显示 "a"')
+        model = SimpleNamespace(invoke_structured=AsyncMock(side_effect=[draft, extracted]))
+        await CasePreparationService(llm=model).prepare("输入a并验证")
+        result = await StructureCaseNode(llm=model)({"request": {"raw_text": edited}})
+        self.assertEqual([call.args[1] for call in model.invoke_structured.call_args_list], [PreparedCase, CaseExtraction])
+        self.assertIn(json.dumps({"confirmed_text": edited}, ensure_ascii=False), model.invoke_structured.call_args.args[0])
+        self.assertEqual(result["case_spec"]["steps"][0]["instructions"][0]["text"], '输入 "a  b"')
+        self.assertEqual(result["case_spec"]["verifications"][0]["goal"], '显示 "a  b"')
 
 
 class PrepareApiTests(unittest.TestCase):
@@ -120,9 +91,9 @@ class PrepareApiTests(unittest.TestCase):
         self.client = TestClient(self.app)
 
     def test_single_case_response_and_session_checks(self):
-        case = CaseSpec(case_name="单个用例", steps=[{"id": "s1", "goal": "打开应用"}])
-        model = SimpleNamespace(invoke_structured=AsyncMock(return_value=extraction(case)))
-        preparation = CasePreparationService(CaseParser(llm=model))
+        draft = PreparedCase(title="单个用例", editable_text="【流程】\n1. 打开应用")
+        model = SimpleNamespace(invoke_structured=AsyncMock(return_value=draft))
+        preparation = CasePreparationService(llm=model)
         with patch("atestservice.runs.service.prepare_case", side_effect=preparation.prepare):
             response = self.client.post("/api/v1/runs/prepare", json={"pluginSessionId": "ps1", "input": "打开应用"})
             self.assertEqual(response.status_code, 200, response.text)

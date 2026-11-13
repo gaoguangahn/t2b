@@ -22,9 +22,9 @@ def verification_request(e):
 def switch_evidence():
     e = evidence(("off", "on", "later"), verifications=[{
         "id": "v1", "goal": "验证Wi-Fi开启", "anchor": {"step_id": "s1", "instruction_id": "i1"}}])
-    e.observations["o0"].elements = [element("Wi-Fi", resourceId="app:id/wifi", checked=False)]
-    e.observations["o1"].elements = [element("Wi-Fi", resourceId="app:id/wifi", checked=True)]
-    e.observations["o2"].elements = [element("后续页面")]
+    e.observations["o0"].elements = normalize_elements([element("Wi-Fi", resourceId="app:id/wifi", checked=False)], {'width': 1000, 'height': 1000})
+    e.observations["o1"].elements = normalize_elements([element("Wi-Fi", resourceId="app:id/wifi", checked=True)], {'width': 1000, 'height': 1000})
+    e.observations["o2"].elements = normalize_elements([element("后续页面")], {'width': 1000, 'height': 1000})
     e.checkpoints["v1"].observation_id = "o1"
     e.checkpoints["v1"].after_operation_id = "op0"
     return e
@@ -39,6 +39,21 @@ def historical_pick(**overrides):
 
 
 class ContextTests(unittest.TestCase):
+    def test_action_and_control_context_use_the_same_normalized_coordinates(self):
+        e = evidence()
+        anchor = e.observations["o0"]
+        anchor.screen_size.width, anchor.screen_size.height = 1080, 2420
+        anchor.elements = normalize_elements([
+            element("搜索", bounds="[108,242][216,484]"),
+        ], anchor.screen_size)
+        request = TargetRequest("op0", "action", "搜索", "搜索", "o0", e.operations["op0"].action.args.bounds)
+        payload, _ = build_target_context(e, request)
+        self.assertEqual(payload["coordinate_space"], "normalized_1000")
+        self.assertEqual(payload["target_bounds"], [100, 100, 200, 200])
+        self.assertEqual(payload["elements"][0]["bounds"], [100, 100, 200, 200])
+        self.assertNotIn("target_bounds_pixels", payload)
+        self.assertEqual(payload["elements"][0]["spatial"]["relation"], "point_hit")
+
     def test_previous_state_is_context_and_future_state_cannot_replace_checkpoint(self):
         e = switch_evidence()
         original = deepcopy(e.exploration.model_dump())
@@ -58,11 +73,11 @@ class ContextTests(unittest.TestCase):
 
     def test_normalized_false_and_parent_links_do_not_turn_missing_state_into_false(self):
         rows = normalize_elements([
-            element("", node_id="row", checked="false", contentDescription="Wi-Fi行"),
-            element("Wi-Fi", id="switch", parentId="row", selected=False),
-            element("其他", id="duplicate"), element("其他", id="duplicate"),
-            element("子项", parent_id="duplicate"),
-        ])
+            element("", node_path=[0], checked="false", contentDescription="Wi-Fi行"),
+            element("Wi-Fi", node_path=[0, 0], selected=False),
+            element("其他", node_path=[1]), element("其他", node_path=[1]),
+            element("子项", node_path=[1, 0]),
+        ], {'width': 1000, 'height': 1000})
         self.assertIs(rows[0]["checked"], False)
         self.assertEqual(rows[0]["description"], "Wi-Fi行")
         self.assertIs(rows[1]["selected"], False)
@@ -72,8 +87,8 @@ class ContextTests(unittest.TestCase):
 
     def test_historical_marker_does_not_move_anchor_or_mean_assertion_passed(self):
         e = switch_evidence()
-        e.observations["o0"].elements = [element("WLAN已开启")]
-        e.observations["o1"].elements = [element("WLAN已关闭")]
+        e.observations["o0"].elements = normalize_elements([element("WLAN已开启")], {'width': 1000, 'height': 1000})
+        e.observations["o1"].elements = normalize_elements([element("WLAN已关闭")], {'width': 1000, 'height': 1000})
         request = verification_request(e)
         _, frames = build_target_context(e, request)
         result = resolve_pick(request, historical_pick(), frames["o1"], e.observations["o1"], frames=frames)
@@ -85,8 +100,8 @@ class ContextTests(unittest.TestCase):
 
     def test_historical_marker_cannot_introduce_multiple_anchor_matches(self):
         e = switch_evidence()
-        e.observations["o0"].elements = [element("WLAN已开启")]
-        e.observations["o1"].elements = [element("WLAN已开启"), element("WLAN已开启", bounds=[500, 500, 600, 600])]
+        e.observations["o0"].elements = normalize_elements([element("WLAN已开启")], {'width': 1000, 'height': 1000})
+        e.observations["o1"].elements = normalize_elements([element("WLAN已开启"), element("WLAN已开启", bounds=[500, 500, 600, 600])], {'width': 1000, 'height': 1000})
         request = verification_request(e)
         _, frames = build_target_context(e, request)
         result = resolve_pick(request, historical_pick(), frames["o1"], e.observations["o1"], frames=frames)
@@ -95,7 +110,7 @@ class ContextTests(unittest.TestCase):
 
     def test_empty_count_can_use_known_collection_without_asserting_presence(self):
         e = switch_evidence()
-        e.observations["o0"].elements = [element("甲", resourceId="app:id/item"), element("乙", resourceId="app:id/item")]
+        e.observations["o0"].elements = normalize_elements([element("甲", resourceId="app:id/item"), element("乙", resourceId="app:id/item")], {'width': 1000, 'height': 1000})
         request = verification_request(e)
         _, frames = build_target_context(e, request)
         selection = TargetPick(request_id=request.id, kind="ui", target_description="待清空的集合",
@@ -120,7 +135,7 @@ class ContextTests(unittest.TestCase):
 
     def test_delta_requires_a_retained_runtime_baseline_not_snapshot_arithmetic(self):
         e = switch_evidence()
-        e.observations["o1"].elements = [element("5", resourceId="app:id/count")]
+        e.observations["o1"].elements = normalize_elements([element("5", resourceId="app:id/count")], {'width': 1000, 'height': 1000})
         request = verification_request(e)
         _, frames = build_target_context(e, request)
         selection = TargetPick(request_id=request.id, kind="ui", target_description="数量", candidate_id="e0",
@@ -139,7 +154,7 @@ class ContextTests(unittest.TestCase):
         request = verification_request(e)
         selection = TargetPick(request_id=request.id, kind="ui", target_description="开关", candidate_id="e0",
             attributes=["resource_id"], reason="没有可用验证策略", verification={"method": "unresolved", "basis": "缺少状态证据"})
-        result = resolve_pick(request, selection, normalize_elements(e.observations["o1"].elements), e.observations["o1"])
+        result = resolve_pick(request, selection, e.observations["o1"].elements, e.observations["o1"])
         self.assertEqual(result.status, "unresolved")
         self.assertTrue(result.notes)
 

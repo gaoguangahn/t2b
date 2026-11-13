@@ -72,6 +72,9 @@ dependencies = [
 ]
 
 [package.dev-dependencies]
+dev = [
+    { name = "uiautomator2" },
+]
 llm-local = [
     { name = "numpy", version = "2.4.6", source = { registry = "https://pypi.tuna.tsinghua.edu.cn/simple" }, marker = "python_full_version < '3.12'" },
     { name = "numpy", version = "2.5.3", source = { registry = "https://pypi.tuna.tsinghua.edu.cn/simple" }, marker = "python_full_version >= '3.12'" },
@@ -93,7 +96,7 @@ requires-dist = [
 ]
 
 [package.metadata.requires-dev]
-dev = []
+dev = [{ name = "uiautomator2", specifier = ">=3.0.0" }]
 llm-local = [
     { name = "numpy", specifier = ">=1.26.0" },
     { name = "opencv-python", specifier = ">=4.8.0" },

@@ -1,111 +1,77 @@
+"""坐标基础工具：内部统一使用 0～1000，需要设备像素时显式转换。"""
 import re
+from math import isfinite
 from typing import Any
 
 
-def parse_bounds(value: Any) -> list[int] | None:
-    """Parse bounds from list, tuple, or '[x1,y1][x2,y2]' string."""
-
+def parse_bounds(value: Any) -> list[float] | None:
+    """解析四项列表、元组或矩形字符串，保留小数，不改变坐标单位。"""
     if isinstance(value, str):
-        numbers = re.findall(r"-?\d+", value)
-
-        if len(numbers) >= 4:
-            return [int(number) for number in numbers[:4]]
-
+        value = re.findall(r"[-+]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][-+]?\d+)?", value)
+    if not isinstance(value, (list, tuple)) or len(value) != 4:
         return None
+    try:
+        numbers = [float(number) for number in value]
+    except (TypeError, ValueError, OverflowError):
+        return None
+    if any(type(number) is bool for number in value) or not all(isfinite(number) for number in numbers):
+        return None
+    return numbers
 
-    if isinstance(value, (list, tuple)) and len(value) == 4:
-        try:
-            return [int(number) for number in value]
-        except (TypeError, ValueError):
-            return None
 
-    return None
-
-
-def to_pixel_bounds(bounds: list[int], screen_size: Any | None) -> list[int]:
-    """Convert normalized 0-1000 bounds to pixel bounds when possible."""
-
-    if screen_size is None:
-        return bounds
-
+def _screen_dimensions(screen_size):
     width = screen_dimension(screen_size, "width")
     height = screen_dimension(screen_size, "height")
     if width is None or height is None:
-        return bounds
+        raise ValueError("坐标转换需要有效的屏幕宽高")
+    return width, height
 
+
+def to_pixel_bounds(bounds: list[float], screen_size: Any) -> list[float]:
+    """将 0～1000 矩形转成设备像素，返回新列表，取整由最终调用方决定。"""
+    width, height = _screen_dimensions(screen_size)
     x1, y1, x2, y2 = bounds
-    return [
-        round(x1 * width / 1000),
-        round(y1 * height / 1000),
-        round(x2 * width / 1000),
-        round(y2 * height / 1000),
-    ]
+    return [x1 * width / 1000, y1 * height / 1000, x2 * width / 1000, y2 * height / 1000]
 
 
-def to_normalized_bounds(bounds: list[int], screen_size: Any | None) -> list[int]:
-    """Convert pixel bounds to normalized 0-1000 bounds when possible."""
-
-    if screen_size is None:
-        return bounds
-
-    width = screen_dimension(screen_size, "width")
-    height = screen_dimension(screen_size, "height")
-    if width is None or height is None:
-        return bounds
-
+def to_normalized_bounds(bounds: list[float], screen_size: Any) -> list[float]:
+    """将设备像素矩形转成 0～1000，保留浮点精度，不覆盖输入或裁剪边界。"""
+    width, height = _screen_dimensions(screen_size)
     x1, y1, x2, y2 = bounds
-    return [
-        round(x1 * 1000 / width),
-        round(y1 * 1000 / height),
-        round(x2 * 1000 / width),
-        round(y2 * 1000 / height),
-    ]
+    return [x1 * 1000 / width, y1 * 1000 / height, x2 * 1000 / width, y2 * 1000 / height]
 
 
 def bounds_to_normalized_point(bounds: Any) -> list[float] | None:
-    """Convert bounds center from 0-1000 coordinates to 0-1 point."""
-
+    """将 0～1000 矩形中心转换为脚本使用的 0～1 点击点。"""
     parsed_bounds = parse_bounds(bounds)
-
     if parsed_bounds is None:
         return None
-
     x1, y1, x2, y2 = parsed_bounds
-
-    return [
-        round(((x1 + x2) / 2) / 1000, 4),
-        round(((y1 + y2) / 2) / 1000, 4),
-    ]
+    return [round(((x1 + x2) / 2) / 1000, 4), round(((y1 + y2) / 2) / 1000, 4)]
 
 
 def click_point_to_normalized_point(point: Any) -> list[float] | None:
-    """Convert ClickPoint-style 0-1000 coordinates to 0-1 point."""
-
+    """将工具的 0～1000 点击点转换为脚本使用的 0～1 点击点。"""
     if not isinstance(point, dict):
         return None
-
-    x = point.get("x")
-    y = point.get("y")
-
     try:
-        return [
-            round(float(x) / 1000, 4),
-            round(float(y) / 1000, 4),
-        ]
-    except (TypeError, ValueError):
+        x, y = float(point.get("x")), float(point.get("y"))
+    except (TypeError, ValueError, OverflowError):
         return None
+    if not isfinite(x) or not isfinite(y):
+        return None
+    return [round(x / 1000, 4), round(y / 1000, 4)]
 
 
 def screen_dimension(screen_size: Any, name: str) -> int | None:
-    """Read a screen dimension from a model or dict."""
-
+    """从屏幕尺寸模型或字典中读取正整数宽高。"""
     value = getattr(screen_size, name, None)
     if value is None and isinstance(screen_size, dict):
         value = screen_size.get(name)
-
+    if type(value) is bool:
+        return None
     try:
         dimension = int(value)
-    except (TypeError, ValueError):
+    except (TypeError, ValueError, OverflowError):
         return None
-
     return dimension if dimension > 0 else None

@@ -3,7 +3,6 @@ import unittest
 from atestservice.contracts.script import ScriptPlan
 from atestservice.script_generation.targeting.models import TargetPick
 from atestservice.script_generation.targeting.resolver import TargetRequest, resolve_pick, resolve_targets
-from atestservice.ui.elements import normalize_elements
 from generation_fixtures import evidence, element, all_actions
 
 
@@ -16,7 +15,7 @@ class TargetTests(unittest.TestCase):
     def resolve(self, elements, selection, goal="点赞", usage="action"):
         e = evidence(elements=elements, goal=goal)
         request = TargetRequest("op0", usage, goal, goal, "o0", e.operations["op0"].action.args.bounds if usage == "action" else None)
-        return resolve_pick(request, selection, normalize_elements(elements), e.observations["o0"])
+        return resolve_pick(request, selection, e.observations["o0"].elements, e.observations["o0"])
 
     def test_like_count_never_becomes_identity_but_resource_id_can(self):
         for count in ("128赞", "2.3万赞"):
@@ -151,10 +150,10 @@ class TargetTests(unittest.TestCase):
         self.assertEqual(result.status, "coordinate")
 
     def test_explicit_parent_identity_can_disambiguate_same_controls(self):
-        elements = [element("点赞", id="like1", parent_id="row1", resourceId="app:id/like"),
-                    element("点赞", id="like2", parent_id="row2", resourceId="app:id/like", bounds=[500, 500, 600, 600]),
-                    element("", id="row1", resourceId="app:id/first_card", bounds=[0, 0, 250, 250]),
-                    element("", id="row2", resourceId="app:id/other_card", bounds=[450, 450, 650, 650])]
+        elements = [element("点赞", node_path=[0, 0], resourceId="app:id/like"),
+                    element("点赞", node_path=[1, 0], resourceId="app:id/like", bounds=[500, 500, 600, 600]),
+                    element("", node_path=[0], resourceId="app:id/first_card", bounds=[0, 0, 250, 250]),
+                    element("", node_path=[1], resourceId="app:id/other_card", bounds=[450, 450, 650, 650])]
         result = self.resolve(elements, pick())
         self.assertEqual(result.status, "resolved")
         self.assertEqual(result.locator.within.resource_id, "app:id/first_card")

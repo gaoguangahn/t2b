@@ -5,6 +5,7 @@ from copy import deepcopy
 from atestservice.contracts.case import CaseSpec
 from atestservice.contracts.observation import DeviceObservation
 from atestservice.exploration.context.swipe_feedback import last_swipe_feedback
+from atestservice.ui.elements import normalize_elements
 from test_exploration_controls import make_node
 
 
@@ -14,7 +15,7 @@ def label(text, y, **extra):
 
 def snapshot(identifier, elements):
     return {"id": identifier, "package": "app", "activity": "List",
-            "screen_size": {"width": 1000, "height": 2000}, "elements": elements}
+            "screen_size": {"width": 1000, "height": 2000}, "elements": normalize_elements(elements, {'width': 1000, 'height': 2000})}
 
 
 def trace(before, after, *, args=None):
@@ -102,7 +103,7 @@ class SwipeLoopFeedbackTests(unittest.IsolatedAsyncioTestCase):
         async def observe(*, index):
             return DeviceObservation(id=f"o{index}", index=index, screen_size={"width": 1000, "height": 2000},
                 screenshot={"filename": f"{index}.jpg", "base64": "YQ=="},
-                elements=[label("参照条目", [800, 1200, 600][index])])
+                elements=normalize_elements([label("参照条目", [800, 1200, 600][index])], {"width": 1000, "height": 2000}))
         node.step_loop.observation_store.observe = observe
         case = CaseSpec(case_name="查找条目", steps=[{"id": "s1", "goal": "滑动查找指定条目"}])
         state = await node({"case_spec": case.model_dump(mode="json")})

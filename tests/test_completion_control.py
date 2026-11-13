@@ -5,6 +5,7 @@ from unittest.mock import AsyncMock
 from atestservice.contracts.case import CaseSpec
 from atestservice.contracts.observation import DeviceObservation
 from atestservice.exploration.context.ui_state import render_ui_state
+from atestservice.ui.elements import normalize_elements
 from atestservice.exploration.tools.tool_definitions import EXPLORE_ACTION_TOOLS
 from atestservice.llm.schema import strict_tool
 from test_exploration_controls import make_node
@@ -91,7 +92,7 @@ class CompletionControlTests(unittest.IsolatedAsyncioTestCase):
         async def observe(*, index):
             return DeviceObservation(id=f"obs{index}", index=index,
                 screen_size={"width": 1000, "height": 2000}, screenshot={"filename": f"{index}.jpg"},
-                elements=[{"text": "Wi-Fi", "resourceId": "settings:id/switch", "checked": index < 2}])
+                elements=normalize_elements([{"text": "Wi-Fi", "resourceId": "settings:id/switch", "checked": index < 2}], {"width": 1000, "height": 2000}))
 
         node.step_loop.observation_store.observe = observe
         case = CaseSpec(case_name="wifi", steps=[{"id": "s1", "goal": "关闭Wi-Fi"}], verifications=[{
@@ -159,12 +160,12 @@ class CompletionControlTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("当前要求 ID：i1", llm.requests[2][1]["content"])
 
     def test_ui_state_preserves_false_missing_fields_aliases_and_limits(self):
-        state = json.loads(render_ui_state({"id": "obs", "elements": [
+        state = json.loads(render_ui_state({"id": "obs", "elements": normalize_elements([
             {"resource-id": "switch", "content-desc": "Wi-Fi", "checked": False},
-            {"text": "other", "enabled": False}, {"text": "missing"}]}))
+            {"text": "other", "enabled": False}, {"text": "missing"}], {'width': 1000, 'height': 2000})}))
         self.assertIs(state["controls"][0]["checked"], False)
-        self.assertEqual(state["controls"][0]["content-desc"], "Wi-Fi")
+        self.assertEqual(state["controls"][0]["description"], "Wi-Fi")
         self.assertNotIn("checked", state["controls"][1])
-        bounded = json.loads(render_ui_state({"elements": [{"checked": True}] * 100}))
+        bounded = json.loads(render_ui_state({"elements": normalize_elements([{"checked": True}] * 100, {'width': 1000, 'height': 2000})}))
         self.assertEqual(len(bounded["controls"]), 60)
         self.assertEqual(bounded["omitted"], 40)

@@ -1,4 +1,4 @@
-"""Model-facing extraction protocol, converted once into the shared CaseSpec."""
+"""确认稿的模型结构化协议；转换后交给公共 CaseSpec 校验引用关系。"""
 from typing import Literal
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -40,7 +40,6 @@ class CaseExtraction(_ExtractionModel):
         repeats = {step.id: step.repeat for step in self.steps}
         for verification in data["verifications"]:
             if repeats.get(verification["anchor"]["step_id"]) == 1:
-                # One iteration has no inside/outside distinction. Keep the exact
-                # instruction boundary rather than moving it to the end of a step.
+                # 单轮没有循环内外之分，保留原指令边界，避免把验证移动到块末。
                 verification["scope"] = "each_iteration"
         return CaseSpec.model_validate(data)

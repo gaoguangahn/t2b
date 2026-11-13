@@ -46,7 +46,7 @@ script_generation/script_gen_node.py     工作流与事件适配
 script_generation/prompts/               plan.md、targets.md、codegen.md
 script_generation/profiles/              框架编码描述
 ui/elements.py                          属性归一化、几何和匹配
-ui/spatial.py                           像素空间关系与候选排序，不判断语义
+ui/spatial.py                           统一坐标的空间关系与候选排序，内部按需计算像素距离，不判断语义
 runtime/artifacts.py                     正式 bundle 拆图存取
 ```
 

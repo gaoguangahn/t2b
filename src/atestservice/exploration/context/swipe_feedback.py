@@ -1,25 +1,20 @@
-"""Small factual UI references for re-evaluating the last swipe's parameters."""
+"""用标准控件比较滑动前后位置，为模型重选参数提供事实参考。"""
 from collections import defaultdict
 
-from atestservice.ui.coordinate import to_normalized_bounds
-from atestservice.ui.elements import normalize_elements
 
 
 def _markers(observation):
-    size = observation.get("screen_size") or {}
-    if not size.get("width") or not size.get("height"):
-        return {}
     groups = defaultdict(list)
-    for item in normalize_elements(observation.get("elements") or []):
+    for item in observation.get("elements") or []:
         bounds = item["bounds"]
         label = item.get("text") or item.get("description")
         if not isinstance(label, str) or not label.strip() or not bounds:
             continue
         if (bounds[2] <= bounds[0] or bounds[3] <= bounds[1] or bounds[2] <= 0 or bounds[3] <= 0
-                or bounds[0] >= size["width"] or bounds[1] >= size["height"]):
+                or bounds[0] >= 1000 or bounds[1] >= 1000):
             continue
         identity = tuple(str(item.get(key) or "") for key in ("resource_id", "class_name", "text", "description"))
-        normalized = to_normalized_bounds(bounds, size)
+        normalized = bounds
         groups[identity].append({"label": label[:80], "center": [round((normalized[0] + normalized[2]) / 2, 1),
                                                                round((normalized[1] + normalized[3]) / 2, 1)]})
     # Repeated labels/identities cannot establish a reliable before/after link.

@@ -1,7 +1,6 @@
-"""Bounded, source-labelled action and before/after evidence for target selection."""
+"""从标准观察快照组织目标筛选证据；附加信息不写回原始轨迹。"""
 from collections import Counter, defaultdict
 
-from atestservice.ui.elements import normalize_elements, target_pixels
 from atestservice.ui.spatial import spatial_relation
 
 
@@ -63,8 +62,8 @@ def build_target_context(evidence, request, *, retained_operation_ids=None):
                     continue
                 identifiers.append(identifier)
     # At most anchor + two operation pairs. No full-run history or final-page substitution.
-    frames = {identifier: normalize_elements(evidence.observations[identifier].elements) for identifier in identifiers[:5]}
-    target = target_pixels(request.bounds, anchor.screen_size)
+    frames = {identifier: evidence.observations[identifier].elements for identifier in identifiers[:5]}
+    target = list(request.bounds.root) if request.bounds else None
     elements = [dict(element) for element in frames[anchor.id]]
     counts = {key: Counter(item.get(key) for item in elements if item.get(key))
               for key in ("resource_id", "text", "description", "class_name")}
@@ -85,7 +84,7 @@ def build_target_context(evidence, request, *, retained_operation_ids=None):
     payload = {"request_id": request.id, "usage": request.usage, "user_goal": request.goal,
                "action_description": request.description, "observation_id": anchor.id,
                "screen_size": anchor.screen_size.model_dump(),
-               "target_bounds_pixels": target, "elements": elements,
+               "coordinate_space": "normalized_1000", "target_bounds": target, "elements": elements,
                "spatial_candidate_ids": [item["id"] for item in sorted(elements, key=lambda item: item.get("spatial", {}).get("score", 0), reverse=True)[:12]] if target else [],
                "related_operations": summaries,
                "runtime_baseline_operation_ids": [item.id for item in operations if item.id in (retained_operation_ids or set())],
